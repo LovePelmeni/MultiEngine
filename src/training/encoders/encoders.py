@@ -1,10 +1,18 @@
 from torch import nn
-import torch 
+import torch
 
 class VAE(nn.Module):
     """
     Implementation of the Variational Autoencoder
     Network for generating Image Embeddings.
+
+    Parameters:
+    -----------
+        input_channels - number of input image channels
+        input_img_size - size of the input image
+        ngf - number of channels to output after first convolution
+        ndf - number of channel decoder accepts as an input
+        latent_space_size - size of the latent space vector
     """
     def __init__(self, 
         input_channels: int, 
@@ -26,6 +34,7 @@ class VAE(nn.Module):
         self.encoder = nn.Sequential(
                 nn.Conv2d(input_channels, ndf, 4, 2, 1, bias=False),
                 nn.LeakyReLU(negative_slope=0.02, inplace=True),
+                
                 nn.Conv2d(ndf, ndf*2, 4, 2, 1, bias=False),
                 nn.LeakyReLU(negative_slope=0.02, inplace=True),
                 nn.BatchNorm2d(num_features=ndf*2, track_running_stats=True),
@@ -90,12 +99,25 @@ class VAE(nn.Module):
             nn.Sigmoid()
         )
 
+    def forward(self, input_imgs: torch.Tensor):
+        mean, logvar = self.encoder(input_imgs)
+        rep_data = self.reparametrize(mu=mean, sigma=torch.sqrt(logvar))
+        decoded_data = self.decode(rep_data)
+        return decoded_data
+
     def encode(self, input_imgs: torch.Tensor):
         encoded_output = self.encoder(input_imgs)
         reshaped_output =  encoded_output.view(
             self.ndf*(self.input_img_size//4)*(self.input_img_size//4), -1)
-        return reshaped_output
-    
+        mean = torch.mean(self.fc1(reshaped_output))
+        log_var = torch.log2(self.fc2(reshaped_output))
+        return mean, log_var 
+
+    def reparametrize(self, mu: float, sigma: float):
+        eps = torch.randint(0, 1, size=1)
+        output_vector = mu + sigma * eps 
+        return self.d1(output_vector)
+
     def decode(self, bottleneck_output: torch.Tensor):
         decoder_input = self.d1(bottleneck_output)
         output = self.decoder(decoder_input)
