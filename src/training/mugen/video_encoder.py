@@ -9,7 +9,8 @@ class VideoEncoder(nn.Module):
     Encodes videos to the last layer before
     passing to the S3D network for further processing.
     """
-    def __init__(self ):
+    def __init__(self):
+        super(VideoEncoder, self).__init__()
         self.model = S3D()
         self.out_dim = self.model.classifier[1].in_channels
         self.model.classifier = nn.Identity(self.out_dim)

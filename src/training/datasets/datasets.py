@@ -1,14 +1,21 @@
 from torch.utils.data import Dataset
 from src.training.datasets import base
+from src.preprocessing.text_augmentations import BertTextTransform
+from src.preprocessing.video_augmentations import VideoTransform
+from torchmultimodal.transforms import (
+    text_transforms,
+    video_transform,
+)
+
 import typing
 import cv2
 import torch
 
-class EncoderDataset(base.BaseDataset, Dataset):
+class VideoEncoderDataset(base.BaseDataset, Dataset):
     """
     Implementation of the dataset,
     compatible with training / evaluating 
-    Autoencoder-based Embedding Generation Network.
+    VideoCLIP-based Embedding Generation Network.
     
     Parameters:
     -----------
@@ -21,12 +28,16 @@ class EncoderDataset(base.BaseDataset, Dataset):
         input_paths: typing.List[str], 
         labels: typing.List,
         dataset_type: typing.Literal['train', 'valid'],
-        transformations=None
+        normalization_mean: float,
+        normalization_std: float
     ):
         self._input_paths = input_paths
         self._input_labels = labels
         self._dataset_type = dataset_type
-        self._transformations = transformations
+        self._transformations = video_transform.VideoTransform(
+            mean=normalization_mean,
+            std=normalization_std,
+        )
     
     def __getitem__(self, idx: int):
         image = cv2.imread(self._input_paths[idx], cv2.IMREAD_UNCHANGED)
@@ -46,3 +57,11 @@ class EncoderDataset(base.BaseDataset, Dataset):
     @dataset_type.setter
     def dataset_type(self, new_dataset_type: str):
         self._dataset_type = new_dataset_type
+
+class TextEncoderDataset(base.BaseDataset):
+    """
+    Textual dataset for storing textual
+    data for distilBERT-based embedding generation encoder.
+    """
+    def __init__(self, ):
+        self.transformations = text_transforms.Bert

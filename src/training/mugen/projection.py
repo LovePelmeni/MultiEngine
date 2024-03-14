@@ -13,6 +13,8 @@ class ProjectionLayer(nn.Module):
         dropout_prob - regularization prob fo dropout reg.
     """
     def __init__(self, in_dim: int, out_dim: int = 256, dropout_prob: float = 0.1):
+        super(ProjectionLayer, self).__init__()
+
         self.dense1 = nn.Linear(
             in_features=in_dim, 
             out_features=out_dim, 
@@ -34,5 +36,4 @@ class ProjectionLayer(nn.Module):
         embed2 = self.drop(embed2)
         embeds = self.layer_norm(embed1 + embed2)
         return embeds
-
 

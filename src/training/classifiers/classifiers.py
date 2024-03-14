@@ -64,6 +64,3 @@ class MultiLayerPerceptronClassifier(nn.Module):
         output = self.dense4(output)
         probs = self.softmax(output)
         return probs
-
-    
-

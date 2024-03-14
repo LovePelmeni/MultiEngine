@@ -1,5 +1,6 @@
 from torch import nn
 import torch
+import typing
 
 class VAE(nn.Module):
     """
@@ -18,13 +19,16 @@ class VAE(nn.Module):
         input_channels: int, 
         input_img_size: int,
         ngf=128, ndf=128,
+        inference_device: typing.Literal['cpu', 'cuda'] = 'cpu',
         latent_space_size: int = 128, 
         batchnorm: bool = False
     ):
         super(VAE, self).__init__()
+        self.device
         
         self.input_channels = input_channels
         self.input_img_size = input_img_size 
+        self.inference_device = inference_device
         self.ngf = ngf
         self.ndf = ndf 
         self.latent_space_size = latent_space_size 
@@ -101,22 +105,22 @@ class VAE(nn.Module):
 
     def forward(self, input_imgs: torch.Tensor):
         mean, logvar = self.encoder(input_imgs)
-        rep_data = self.reparametrize(mu=mean, sigma=torch.sqrt(logvar))
-        decoded_data = self.decode(rep_data)
+        z = self.reparametrize(mu=mean, sigma=torch.sqrt(logvar))
+        decoded_data = self.decode(z)
         return decoded_data
 
     def encode(self, input_imgs: torch.Tensor):
         encoded_output = self.encoder(input_imgs)
-        reshaped_output =  encoded_output.view(
-            self.ndf*(self.input_img_size//4)*(self.input_img_size//4), -1)
+        reshaped_output =  encoded_output.view(-1,
+        self.ndf*(self.input_img_size//4)*(self.input_img_size//4))
         mean = torch.mean(self.fc1(reshaped_output))
-        log_var = torch.log2(self.fc2(reshaped_output))
+        log_var = self.fc2(reshaped_output)
         return mean, log_var 
 
-    def reparametrize(self, mu: float, sigma: float):
-        eps = torch.randint(0, 1, size=1)
-        output_vector = mu + sigma * eps 
-        return self.d1(output_vector)
+    def reparametrize(self, mu: torch.autograd.Variable, sigma: torch.autograd.Variable):
+        eps = torch.FloatTensor(device=self.inference_device).normal_()
+        eps = torch.autograd.Variable(data=eps, requires_grad=True)
+        return eps.mul(sigma).add_(mu)
 
     def decode(self, bottleneck_output: torch.Tensor):
         decoder_input = self.d1(bottleneck_output)
