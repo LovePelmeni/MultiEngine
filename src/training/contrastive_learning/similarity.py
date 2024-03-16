@@ -75,7 +75,7 @@ class SSIM(object):
             L = val_range
 
         padd = 0
-        (batch, channel, height, width) = img1.shape
+        (_, channel, _, _) = img1.shape
         mu1 = convolve2d(img1, window, padding=padd, groups=channel)
         mu2 = convolve2d(img2, window, padding=padd, groups=channel)
 
@@ -100,7 +100,7 @@ class SSIM(object):
             ssim = ssim.mean(1).mean(1).mean(1)
         return ssim
 
-def calculate_similarity(sentence1, sentence2):
+def calculate_text_similarity(sentence1, sentence2):
     """
     Calculates similarity between 2 sentences
     by computing cosine similarity score of Word2Vec
