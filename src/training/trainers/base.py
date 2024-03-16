@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod 
+from abc import abstractmethod 
 from src.training.callbacks import base
 
 class BaseTrainer(base.TrainerCallbackMixin):
