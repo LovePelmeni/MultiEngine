@@ -1,12 +1,10 @@
-from tkinter import E
-from torch.utils.data import Sampler
 from src.training.contrastive_learning import similarity
 import typing
 import numpy
 import torch
 from abc import ABC, abstractmethod
 
-class BaseSampler(Sampler, ABC):
+class BaseSampler(ABC):
     """
     Base Sampling class for batch training
     of neural networks.
@@ -34,9 +32,6 @@ class BaseSampler(Sampler, ABC):
             audio_data=audio_data,
             labels=labels
         )
-    
-    def __len__(self):
-        return len(self.video_data)
 
     @abstractmethod
     def pair_similarity_metric(self, pair1, pair2, **kwargs):
@@ -60,7 +55,7 @@ class BaseSampler(Sampler, ABC):
             ],
         batch_labels: typing.List,
         **kwargs
-    ):
+    ) -> typing.List[typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         """
         Method which implements logic 
         of picking hard negative and positive samples
@@ -69,45 +64,27 @@ class BaseSampler(Sampler, ABC):
             in other classes.
         """
 
-    def __iter__(self):
-        total_batches = len(self.video_data[0]) / self.batch_size
-        output_batches = []
-
-        for idx in range(total_batches):
-            start = idx*self.batch_size
-            end = start+self.batch_size
-            batch_data = self.aligned_pairs[start:end]
-            batch_labels = self.labels[start:end]
-            mined_pairs = self.hard_mining(batch_data=batch_data, batch_labels=batch_labels)
-            output_batches.append(mined_pairs)
-            
-        if len(self.video_data[0]) % self.batch_size != 0:
-            output_batches.append(self.aligned_pairs[:end])
-        
-        return output_batches
-
-
 class InstanceDiscriminationContrastSampler(BaseSampler):
     
     def __init__(self, 
-        video_transformations,
+        image_transformations,
         text_transformations,
         audio_transformations,
         **kwargs
     ):
         super(InstanceDiscriminationContrastSampler, self).__init__(**kwargs)
-        self.video_transformations = video_transformations
+        self.image_transformations = image_transformations
         self.text_transformations = text_transformations 
         self.audio_transformations = audio_transformations
         
     def hard_mining(self, batch_data: typing.List, batch_labels: typing.List):
-
+ 
         output_samples = []
 
         for idx, sample in enumerate(batch_data):
 
             pos_sample = (
-                self.video_transformations(sample[0]) if self.video_transformations else sample[0],
+                self.image_transformations(sample[0]) if self.video_transformations else sample[0],
                 self.text_transformations(sample[1]) if self.text_transformations else sample[1],
                 self.audio_transformations(sample[2]) if self.audio_transformations else sample[2]
             )
@@ -169,6 +146,4 @@ class SupervisedContrastSampler(BaseSampler):
                 )
             )
         return output_samples 
-
-
 
