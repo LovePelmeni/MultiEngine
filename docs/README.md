@@ -1,4 +1,4 @@
-# Multimodal Machine Learning for refined Emotion Recognition
+# EmotionVIT mutlimodal network for refined Emotion Recognition
 
 Author: Klimushin Kirill Alexandrovich
 
