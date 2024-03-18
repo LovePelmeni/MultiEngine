@@ -2,7 +2,9 @@
 
 Author: Klimushin Kirill Alexandrovich
 
-<img>
+<p align="center">
+  <a><img src="https://github.com/LovePelmeni/EmotionVIT/blob/main/docs/imgs/banner.avif" style="width: 100%; height: 100%"></a>
+</p>
 
 ## Motivation
 Modern society been going through significant changes, which impact Educational systems, forcing them to search for alternative ways of providing high-quality studying experience, such as conducting and organizing remote sessions outdoors or online via popular and ubiqitous video streaming platforms. However, with this considerable changes, pertinent concern of effectiveness may arise.
