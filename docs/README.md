@@ -17,7 +17,7 @@ Document is responsible for informing reader of relevant architectural decisions
 ## Architecture
 
 <p align="center">
-  <a><img src="https://github.com/LovePelmeni/EmotionVIT/blob/main/docs/imgs/architecture.png" style="width: 50%; height: 50%"></a>
+  <a><img src="https://github.com/LovePelmeni/EmotionVIT/blob/main/docs/imgs/architecture.png" style="width: 80%; height: 90%"></a>
 </p>
 
 ## Image Modality
