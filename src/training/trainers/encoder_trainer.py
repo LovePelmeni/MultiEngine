@@ -20,6 +20,7 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
+
 class EncoderTrainer(base.BaseTrainer):
     """
     Trainer pipeline for 

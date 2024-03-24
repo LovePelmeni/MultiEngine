@@ -257,21 +257,20 @@ class ContrastiveTrainer(base.BaseTrainer):
         self.on_init_start()
 
         global_step = 0
-        curr_loss = float('inf')
+        overall_loss = float('inf')
 
         self.network.train()
         loader = self.configure_loader(train_dataset)
         self.on_init_end()
 
         for epoch in range(self.max_epochs):
-            self.on_train_batch_start()
 
-            for videos, texts, audios, labels in tqdm(
+            for images, texts, audios, labels in tqdm(
                     loader, 
                     desc='epoch: %s; curr_loss: %s;' % (
-            epoch, curr_loss)):
+            epoch, overall_loss)):
                 
-                samples = list(zip(videos, texts, audios))
+                samples = list(zip(images, texts, audios))
 
                 # finding hard pairs of (pos_sample, sample, neg_sample) for
                 # contrastive learning training, using current batch
@@ -279,24 +278,32 @@ class ContrastiveTrainer(base.BaseTrainer):
                     batch_data=samples, 
                     batch_labels=labels
                 )
-                
+                # each pair follow format: (image, text), for both positive, main and negative.
                 for pos_pair, pair, neg_pair in hard_pairs:
+                    
+                    self.on_train_batch_start()
+                    pos_pair_v_emb, pos_pair_t_emb = self.predict_embs(pos_pair)
+                    self.on_train_batch_end()
 
-                    pos_pair_v_emb, pos_pair_t_emb, pos_pair_a_emb = self.predict_embs(pos_pair)
-                    pair_v_emb, pair_t_emb, pair_a_emb = self.predict_embs(pair)
-                    neg_pair_v_emb, neg_pair_t_emb, neg_pair_a_emb = self.predict_embs(neg_pair)
-
-                    video_loss = self.loss_function(pos_pair_v_emb, pair_v_emb, neg_pair_v_emb)
-                    audio_loss = self.loss_function(pos_pair_a_emb, pair_a_emb, neg_pair_a_emb)
+                    pair_v_emb, pair_t_emb  = self.predict_embs(pair)
+                    neg_pair_v_emb, neg_pair_t_emb = self.predict_embs(neg_pair)
+                    
+                    img_loss = self.loss_function(pos_pair_v_emb, pair_v_emb, neg_pair_v_emb)
                     text_loss = self.loss_function(pos_pair_t_emb, pair_t_emb, neg_pair_t_emb)
 
-                    for idx, loss in enumerate([video_loss, audio_loss, text_loss]):
+                    overall_loss = img_loss.item() + text_loss.item()
+                    # in case we are using single gpu, we traverse
+                    # over all computed loss (for each modality) and after each update
+                    # clear gradients 
+
+                    for idx, loss in enumerate([img_loss, text_loss]):
 
                         loss.backward()
                         self.optimizers[idx].step()
 
                         if len(self.lr_schedulers) > 0:
                             self.lr_schedulers[idx].step()
+
                         # emptying the gradients, so they does not overlap
                         # with next ones, when training multiple networks
                         # on the same device.
@@ -305,7 +312,7 @@ class ContrastiveTrainer(base.BaseTrainer):
             # we pass argument 'trainer' to this event
             # in case early stopping callback want to say us, that training is done.
             # It will update flag 'stop' to True
-            self.on_train_batch_end(trainer=self)
+            self.on_train_epoch_end(trainer=self, overall_loss=overall_loss)
             
             # global step is simply used to track current epoch.
             self.on_validation_start(global_step=global_step)
@@ -314,98 +321,8 @@ class ContrastiveTrainer(base.BaseTrainer):
 
             if self.stop: break
 
-        return curr_loss
-
-    def evaluate(self, validation_dataset: dataset.Dataset):
-        
-        with torch.no_grad():
-            loader = self.configure_loader(validation_dataset)
-
-            video_metrics = []
-            text_metrics = []
-            audio_metrics = []
-
-            for videos, texts, audios, _ in loader:
-
-                sample = list(zip(videos, texts, audios))
-                hard_pairs = self.contrastive_sampler.hard_mining(sample)
-                
-                for pos_sample, sample, neg_sample in hard_pairs:
-
-                    pos_emb = self.predict_embs(pos_sample)
-                    pred_emb = self.predict_embs(sample)
-                    neg_emb = self.predict_embs(neg_sample)
-                    
-                    video_metric = self.eval_metric(
-                        pred_emb[0], pos_emb[0], neg_emb[0])
-
-                    audio_metric = self.eval_metric(
-                        pred_emb[1], pos_emb[1], neg_emb[1])
-
-                    text_metric = self.eval_metric(
-                        pred_emb[2], pos_emb[2], neg_emb[2]
-                    )
-                video_metrics.append(video_metric)
-                text_metrics.append(text_metrics)
-                audio_metrics.append(audio_metrics)
-    
-            return (
-                numpy.mean(video_metrics), 
-                numpy.mean(text_metrics), 
-                numpy.mean(audio_metrics)
-            ) 
-
-    def sliced_evaluate(self, validation_dataset: datasets.ContrastiveDataset):
-
-        with torch.no_grad():
-            metrics = {}
-            labels = numpy.unique(validation_dataset.labels)
-
-            video_embs_predictions = []
-            text_embs_predictions = []
-            audio_embs_predictions = []
-
-            for label in labels:
-
-                data_slice = [sample for sample in validation_dataset if sample[-1] == label]
-
-                for video, text, audio, label in data_slice:
-                    pred_v_emb, pred_t_emb, pred_a_emb = self.predict_embs(
-                        data_sample=(video, text, audio)
-                    )
-                    video_embs_predictions.append(pred_v_emb)
-                    text_embs_predictions.append(pred_t_emb)
-                    audio_embs_predictions.append(pred_a_emb)
-
-            # comparing vectors of each modalities together 
-
-            video_embs_predictions = torch.as_tensor(video_embs_predictions)
-            text_embs_predictions = torch.as_tensor(text_embs_predictions)
-            audio_embs_predictions = torch.as_tensor(audio_embs_predictions)
-
-            video_embs_predictions.requires_grad = False
-            text_embs_predictions.requires_grad = False 
-            audio_embs_predictions.requires_grad = False
-
-            video_sim_metric = self.eval_metric(
-                video_embs_predictions.unsqueeze(1), 
-                video_embs_predictions, 
-                dim=2
-            )
-            text_sim_metric = self.eval_metric(
-                text_embs_predictions, 
-                text_embs_predictions, 
-                dim=2
-            )
-            audio_sim_metric = self.eval_metric(
-                audio_embs_predictions, 
-                audio_embs_predictions,
-                dim=2
-            )
-            metrics[label] = (
-                video_sim_metric, 
-                text_sim_metric,
-                audio_sim_metric
-            )
-        return metrics
-
+    def sliced_evaluate(self, embeddings: typing.List[nn.Module], labels: typing.List):
+        """
+        Evaluates embeddings on individual slices of data,
+        based on the label.
+        """
