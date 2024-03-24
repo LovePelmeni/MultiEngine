@@ -1,6 +1,6 @@
 from facenet_pytorch import MTCNN 
 import numpy
-from src.preprocessing.augmentations import resize
+from src.preprocessing.image_augmentations import resize
 
 class HumanFaceDetector(object):
     """
@@ -43,4 +43,4 @@ class HumanFaceDetector(object):
                 min(max(pred_boxes[box][2], 0), img_width-1),
                 min(max(pred_boxes[box][3], 0), img_height-1)
             ]
-        
+        return output_boxes
