@@ -10,12 +10,55 @@ file_handler = logging.FileHandler(filename="search_logs.log")
 logger.addHandler(file_handler)
 
 
+class BaseVectorQuantizer(abc.ABC):
+    """
+    Base module for quantizing
+    embedding vectors to a lower
+    representation state
+    """
+
+    @abc.abstractclassmethod
+    def from_config(cls, config: typing.Dict):
+        """
+        Loads vector quantizer from specified
+        configuration.
+
+        Parameters:
+        -----------
+            config - (dict) - dictionary, containing 
+            parameters.
+        """
+
+    @abc.abstractmethod
+    def shrink(self, embedding: numpy.ndarray):
+        """
+        Shrinks embedding vector to a lower
+        dimensional representation.
+
+        Parameters:
+        -----------
+            embedding - embedding to shrink (must match in dim)
+        """
+
+
 class BaseSimilaritySearcher(abc.ABC):
     """
     Base module for searching similar
     embedding vectors, that are spatial
     representations of products or items to recommend.
     """
+    @abc.abstractclassmethod
+    def from_config(cls, config: typing.Dict):
+        """
+        Loads pretrained similarity search index
+        instance, based on the specified configuration.
+        
+        Parameters:
+        -----------
+            config - typing.Dict object, which contains
+            parameters of the similarity search module.
+        """
+    @abc.abstractmethod
     def train(self, train_embeddings: numpy.ndarray):
         """
         In case Search Index is trainable,
@@ -155,7 +198,7 @@ class HNSWSearcher(BaseSimilaritySearcher):
         )
         return candidate_indices
 
-class IVNFPQSimilaritySeacher(BaseSimilaritySearcher):
+class IVNFPQQuantizer(BaseSimilaritySearcher):
     """
     Base module for finding similar embedding vectors
     using Inverted File Product Quantization Algorithm.
@@ -166,7 +209,7 @@ class IVNFPQSimilaritySeacher(BaseSimilaritySearcher):
 
         if 'index_path' in config:
             index_path = config.get("index_path")
-            cls.index = faiss.read_index(index_path)
+            cls.quantizer = faiss.read_index(index_path)
         else:
             n_centroids = config.get("n_centroids")
             code_size = config.get("code_size")
@@ -174,24 +217,28 @@ class IVNFPQSimilaritySeacher(BaseSimilaritySearcher):
             embedding_dim = config.get('embedding_dim')
 
             coarse_quantizer = faiss.IndexFlatL2(embedding_dim)
-            cls.index = faiss.IndexIVFPQ(
+            cls.quantizer = faiss.IndexIVFPQ(
                 coarse_quantizer, 
                 embedding_dim, 
                 n_centroids, 
                 code_size, nbits
             )
         
-        if not cls.index.is_trained:
+        if not cls.quantizer.is_trained:
             if 'train_embeddings' in config:
                 train_embs = config.get("train_embeddings")
-                cls.index.add(train_embs)
+                cls.quantizer.train(train_embs)
+                cls.quantizer.add(train_embs)
 
         cls.number_of_suggestions = num_of_suggestions
         return cls()
 
-    def search(self, embedding: torch.Tensor):
-        _, candidate_indices = self.index.search(
+    def shrink(self, embedding: torch.Tensor):
+        _, candidate_indices = self.quantizer(
             n=self.number_of_suggestions, 
             x=embedding
         )
         return candidate_indices
+
+
+
