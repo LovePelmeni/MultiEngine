@@ -321,8 +321,39 @@ class ContrastiveTrainer(base.BaseTrainer):
 
             if self.stop: break
 
-    def sliced_evaluate(self, embeddings: typing.List[nn.Module], labels: typing.List):
+    def find_similarity(self, embeddings_group):
+        """
+        Finds similarity between embeddings in a given
+        group.
+        Parameters:
+        -----------
+            embeddings_group - list of similar embeddings to compare
+        """
+        total_sim = []
+        for emb1 in range(len(embeddings_group)):
+            emb_sims = []
+            for emb2 in range(emb1, len(embeddings_group)):
+                sim = (
+                    torch.dot(embeddings_group[emb1], embeddings_group[emb2])
+                    ) / (
+                        torch.norm(embeddings_group[emb1]) 
+                        * torch.norm(embeddings_group[emb2])
+                    )
+                emb_sims.append(sim.item())
+            total_sim.append(numpy.mean(emb_sims))
+        return numpy.mean(total_sim)
+
+    def sliced_evaluate(self, embeddings: typing.List[torch.Tensor], labels: typing.List):
         """
         Evaluates embeddings on individual slices of data,
         based on the label.
         """
+        output_metrics: typing.Dict[str, float] = {}
+        unique_labels = numpy.unique(labels)
+        for label in unique_labels:
+            indices = numpy.where(labels == label)[0]
+            cat_embeddings = [emb for emb in embeddings if emb in indices]
+            metric = self.find_similarity(cat_embeddings)
+            output_metrics[label] = metric
+        return output_metrics
+
