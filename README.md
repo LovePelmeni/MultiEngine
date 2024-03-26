@@ -15,7 +15,7 @@ This document contains a low level overview of the system, including internal co
 # Architecture
 
 <p align="center">
-  <a><img src="https://github.com/LovePelmeni/DeepfakeStream/blob/main/docs/imgs/arch_diagram.png" style="width: 100%; height: 100%"></a>
+  <a><img src="https://github.com/LovePelmeni/MultiEngine/blob/main/docs/imgs/arch_diagram.png" style="width: 100%; height: 100%"></a>
 </p>
 
 # Data management and discovery
