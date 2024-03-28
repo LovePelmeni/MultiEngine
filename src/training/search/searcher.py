@@ -4,6 +4,8 @@ import abc
 import torch
 import numpy
 import logging
+import pathlib
+from src.training.search import search_dataset
 
 logger = logging.getLogger(name='search_logger')
 file_handler = logging.FileHandler(filename="search_logs.log")
@@ -16,7 +18,10 @@ class BaseVectorQuantizer(abc.ABC):
     embedding vectors to a lower
     representation state
     """
-
+    @abc.abstractproperty
+    def _quantizer(self) -> faiss.Quantizer:
+        raise NotImplementedError()
+ 
     @abc.abstractclassmethod
     def from_config(cls, config: typing.Dict):
         """
@@ -27,6 +32,16 @@ class BaseVectorQuantizer(abc.ABC):
         -----------
             config - (dict) - dictionary, containing 
             parameters.
+        """
+    @abc.abstractmethod
+    def save(self, index_path: typing.Union[str, pathlib.Path]):
+        """
+        Saves quantizer under 'name.index'
+        application.
+        
+        Parameters:
+        -----------
+            index_path - destination path to save index.
         """
 
     @abc.abstractmethod
@@ -47,6 +62,10 @@ class BaseSimilaritySearcher(abc.ABC):
     embedding vectors, that are spatial
     representations of products or items to recommend.
     """
+    @abc.abstractproperty 
+    def _index(self) -> faiss.Index:
+        raise NotImplementedError()
+
     @abc.abstractclassmethod
     def from_config(cls, config: typing.Dict):
         """
@@ -58,6 +77,7 @@ class BaseSimilaritySearcher(abc.ABC):
             config - typing.Dict object, which contains
             parameters of the similarity search module.
         """
+
     @abc.abstractmethod
     def train(self, train_embeddings: numpy.ndarray):
         """
@@ -96,23 +116,35 @@ class FlatSearcher(BaseSimilaritySearcher):
 
         if 'index_path' in config:
             index_path = config.get("index_path")
-            cls.index  = faiss.read_index(index_path)
+            cls._index  = faiss.read_index(index_path)
         else:
             dim = config.get("embedding_dim")
-            cls.index = faiss.IndexFlatL2(dim)
+            cls._index = faiss.IndexFlatL2(dim)
 
-        cls.number_of_suggestions = number_of_suggestions
+        cls._number_of_suggestions = number_of_suggestions
 
-        if not cls.index.is_trained:
-            if 'train_embeddings' in config:
-                train_embs = config.get('train_embeddings')
-                cls.index.add(train_embs)
+        # loading train dataset
+        dataset_path = config.get("dataset_path")
+        access_mode = config.get("access_mode")
+        data_shape = config.get("data_shape")
+        data_type = config.get("data_type")
+
+        cls._dataset = search_dataset.SearchVectorDataset(
+            dataset_path=dataset_path,
+            access_mode=access_mode,
+            data_shape=data_shape,
+            data_type=data_type
+        )
+
+        if not cls._index.is_trained:
+            cls._index.train(cls._dataset._mem_vec_data)
+            cls._index.add(cls._dataset.mem_vec_data)
         return cls()
         
     def search(self, embedding: torch.Tensor) -> typing.List[int]:
-        _, candidate_indices = self.index.search(
+        _, candidate_indices = self._index.search(
             embedding, 
-            self.number_of_suggestions
+            self._number_of_suggestions
         )
         return candidate_indices
         
@@ -123,7 +155,7 @@ class LSHSearcher(BaseSimilaritySearcher):
     """
     def __init__(self):
         super(BaseSimilaritySearcher, self).__init__()
-        
+    
     @classmethod
     def from_config(cls, config: typing.Dict):
 
@@ -131,26 +163,39 @@ class LSHSearcher(BaseSimilaritySearcher):
         num_of_suggestions = config.get("num_suggestions")
 
         if 'index_path' in config:
-            cls.index = faiss.read_index(index_path)
+            cls._index = faiss.read_index(index_path)
         else:
             num_hash_tables = config.get("num_hash_tables")
             embedding_dim = config.get("embedding_dim")
-            cls.index = faiss.IndexLSH(
+            cls._index = faiss.IndexLSH(
                 embedding_dim, 
                 num_hash_tables
             )
 
-        cls.number_of_suggestions = num_of_suggestions
-        
-        if not cls.index.is_trained and 'train_embeddings' in config:
-            train_embs = config.get("train_embeddings")
-            cls.index.add(train_embs)
+        cls._number_of_suggestions = num_of_suggestions
+
+        # loading train dataset
+        dataset_path = config.get("dataset_path")
+        access_mode = config.get("access_mode")
+        data_shape = config.get("data_shape")
+        data_type = config.get("data_type")
+
+        cls._dataset = search_dataset.SearchVectorDataset(
+            dataset_path=dataset_path,
+            access_mode=access_mode,
+            data_shape=data_shape,
+            data_type=data_type
+        )
+
+        if not cls._index.is_trained:
+            cls._index.train(cls._dataset._mem_vec_data)
+            cls._index.add(cls._dataset.mem_vec_data)
         return cls()
 
     def search(self, embedding: torch.Tensor) -> typing.List:
-        _, candidate_indices = self.index.search(
+        _, candidate_indices = self._index.search(
             embedding, 
-            self.number_of_suggestions
+            self._number_of_suggestions
         )
         return candidate_indices
 
@@ -168,33 +213,43 @@ class HNSWSearcher(BaseSimilaritySearcher):
 
         index_path = config.get("index_path")
         num_of_suggestions = config.get("num_suggestions")
+        dim = config.get("embedding_dim")
 
         if 'index_path' in config:
-            cls.index = faiss.read_index(index_path)
+            cls._index = faiss.read_index(index_path)
         else:
             # Set HNSW index parameters
-            dim = config.get("embedding_dim")
             M = config.get("vertex_connections") # number of connections each vertex will have
             ef_search = config.get("ef_search") # depth of layers explored during search
             ef_construction = config.get("ef_construction") # depth of layers explored during index construction
 
-            cls.index = faiss.IndexHNSW(dim, M)
-            cls.index.hnsw.efContruction = ef_construction
-            cls.index.hnsw.efSearch = ef_search
+            cls._index = faiss.IndexHNSW(dim, M)
+            cls._index.hnsw.efContruction = ef_construction
+            cls._index.hnsw.efSearch = ef_search
 
-        cls.number_of_suggestions = num_of_suggestions
-        
-        if not cls.index.is_trained:
-            if 'train_embeddings' in config:
-                train_embs = config.get("train_embeddings")
-                cls.index.add(train_embs)
+        cls._number_of_suggestions = num_of_suggestions
+        # loading train dataset
+        dataset_path = config.get("dataset_path")
+        access_mode = config.get("access_mode")
+        data_shape = config.get("data_shape")
+        data_type = config.get("data_type")
 
+        cls._dataset = search_dataset.SearchVectorDataset(
+            dataset_path=dataset_path,
+            access_mode=access_mode,
+            data_shape=data_shape,
+            data_type=data_type
+        )
+
+        if not cls._index.is_trained:
+            cls._index.train(cls._dataset._mem_vec_data)
+            cls._index.add(cls._dataset._mem_vec_data)
         return cls()
 
     def search(self, embedding: torch.Tensor) -> typing.List:
-        _, candidate_indices = self.index.search(
+        _, candidate_indices = self._index.search(
             embedding, 
-            self.number_of_suggestions
+            self._number_of_suggestions
         )
         return candidate_indices
 
@@ -205,11 +260,12 @@ class IVNFPQQuantizer(BaseSimilaritySearcher):
     """
     @classmethod
     def from_config(cls, config: typing.Dict):
+
         num_of_suggestions = config.get("num_suggestions")
 
         if 'index_path' in config:
             index_path = config.get("index_path")
-            cls.quantizer = faiss.read_index(index_path)
+            cls._quantizer = faiss.read_index(index_path)
         else:
             n_centroids = config.get("n_centroids")
             code_size = config.get("code_size")
@@ -217,25 +273,36 @@ class IVNFPQQuantizer(BaseSimilaritySearcher):
             embedding_dim = config.get('embedding_dim')
 
             coarse_quantizer = faiss.IndexFlatL2(embedding_dim)
-            cls.quantizer = faiss.IndexIVFPQ(
+            cls._quantizer = faiss.IndexIVFPQ(
                 coarse_quantizer, 
                 embedding_dim, 
                 n_centroids, 
                 code_size, nbits
             )
         
-        if not cls.quantizer.is_trained:
-            if 'train_embeddings' in config:
-                train_embs = config.get("train_embeddings")
-                cls.quantizer.train(train_embs)
-                cls.quantizer.add(train_embs)
+        # loading train dataset
+        dataset_path = config.get("dataset_path")
+        access_mode = config.get("access_mode")
+        data_shape = config.get("data_shape")
+        data_type = config.get("data_type")
 
-        cls.number_of_suggestions = num_of_suggestions
+        cls._dataset = search_dataset.SearchVectorDataset(
+            dataset_path=dataset_path,
+            access_mode=access_mode,
+            data_shape=data_shape,
+            data_type=data_type
+        )
+
+        if not cls.quantizer.is_trained:
+            cls._quantizer.train(cls._dataset._mem_vec_data)
+            cls._quantizer.add(cls._dataset._mem_vec_data)
+
+        cls._number_of_suggestions = num_of_suggestions
         return cls()
 
     def shrink(self, embedding: torch.Tensor):
-        _, candidate_indices = self.quantizer(
-            n=self.number_of_suggestions, 
+        _, candidate_indices = self._quantizer(
+            n=self._number_of_suggestions, 
             x=embedding
         )
         return candidate_indices
