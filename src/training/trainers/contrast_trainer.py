@@ -1,15 +1,18 @@
+import dataclasses
 from src.training.trainers import base
 from torch.utils.data import dataset
 from src.training.callbacks import (
     checkpoints,
     devices,
     early_stopping,
-    logistics
+    logistics,
+    distributed as call_dist
 )
 import numpy
-from src.training.datasets import datasets
 import pathlib
 from src.training import exceptions
+from torch.distributed.optim import zero_redundancy_optimizer as zero
+from torch.nn.parallel import DistributedDataParallel as DDP
 import os
 import random
 from tqdm import tqdm
@@ -21,16 +24,26 @@ import torch
 from torch import optim
 from torch.optim import lr_scheduler
 from torch import device
+from dataclasses import dataclass
 
+@dataclasses.dataclass
+class TrainerConfig(object):
+    """
+    Configuration instance, that is responsible
+    for training single network instance.
+    """
+    network: nn.Module
+    train_devices: typing.List[torch.DeviceObjType]
+    optimizer_config: typing.Dict[str, typing.Any]
+    lr_scheduler_config: typing.Dict[str, typing.Any]
 
 class ContrastiveTrainer(base.BaseTrainer):
     """
     Training pipeline for contrastive learning
     of multiple embedding generation networks:
 
-        - S3D-backed video embedding encoder
-        - DistilBERT-backed word embedding encoder
-        - DistilBERT-backed audio embedding encoder
+        - Autoencoder-backed image embedding generator for processing image data.
+        - DistilBERT-backed word embedding generator for processing text data.
 
     Parameters:
     -----------
@@ -42,61 +55,122 @@ class ContrastiveTrainer(base.BaseTrainer):
         distributed: bool - enable distributed training.
     """
     def __init__(self,
-        networks: typing.List[nn.Module],
-        optimizers: typing.List[nn.Module],
+        train_configs: typing.List[TrainerConfig],
         contrastive_sampler: sampler.BaseSampler,
         batch_size: int,
-        loss_name: str,
+        pair_loss_name: str,
+        modal_loss_name: str,
         eval_metric_name: str,
-        lr_schedulers: typing.List = [],
+        log_dir: typing.Union[str, pathlib.Path],
         distributed: bool = False,
+        dist_rank: int = None,
+        dist_backend: typing.Literal["nccl", "golo"] = None,
+        world_size: int = None,
+        group_name: str = None,
         reproducible: bool = False
     ):
         super(ContrastiveTrainer, self).__init__()
-        self.networks = networks
-        self.optimizers = optimizers
-        self.schedulers = lr_schedulers
+
         self.contrastive_sampler = contrastive_sampler
         self.batch_size = batch_size
         self.distributed = distributed 
         self.reproducible = reproducible
-        self.loss_function = self.load_loss(loss_name)
+        self.world_size = world_size 
+        self.dist_rank = dist_rank 
+        self.dist_backend = dist_backend
+        self.group_name = group_name
+
+        self.configure_callbacks(base_log_dir=log_dir)
+
+        self.on_init_start()
+        self.configure_setup(train_configs=train_configs)
+
+        # two loss functions for contrasive learning training.
+        # 1. loss for measuring similarity / dissimilarity between hard negative and positive pairs
+        # 2. loss for measuring similarity between embeddings from multiple modalities
+
+        self.pair_loss_function = self.load_loss(pair_loss_name)
+        self.modal_loss_function = self.load_loss(modal_loss_name)
         self.eval_metric = self.load_metric(eval_metric_name)
         self.stop = False # status code to urgently stop training
+
+    def configure_setup(self, train_configs: typing.List[TrainerConfig]):
+        """
+        Configures networks, optimization algorithms and
+        learning rate schedulers.
+        
+        Parameters:
+        -----------
+            train_configs - list of TrainerConfig objects
+        """
+        self.networks = []
+        self.optimizers = []
+        self.schedulers = []
+
+        for config in train_configs:
+            network = self.configure_network(
+                network=config.network,
+                device_ids=config.train_devices,
+                output_device=config.output_device
+            )
+            optimizer = self.configure_optimizer(
+                network=network,
+                optimizer_config=config.optimizer_config
+            )
+            lr_scheduler = self.configure_lr_scheduler(
+                optimizer=optimizer,
+                lr_scheduler_config=config.lr_scheduler_config
+            )
+            self.networks.append(network)
+            self.optimizers.append(optimizer)
+            self.schedulers.append(lr_scheduler)
+        
+    def configure_network(self, 
+        network: nn.Module, 
+        device_ids: typing.List[torch.device],
+        output_device: str = 'cpu'
+    ):
+        if (self.distributed == True):
+            conf_network = DDP(
+                network, 
+                device_ids=device_ids, 
+                output_device=output_device
+            )
+        else:
+            device = device_ids[0]
+            conf_network = network.to(device=device)
+        return conf_network
     
     def configure_optimizer(self, network: nn.Module, optimizer_config: typing.Dict):
 
-        name = optimizer_config.get("name")
+        optimizer_name = optimizer_config.get("name")
         learning_rate = optimizer_config.get("learning_rate")
         weight_decay = optimizer_config.get("weight_decay", None)
         use_nesterov = optimizer_config.get("nesterov", False)
 
-        if name.lower() == 'adam':
-            return optim.Adam(
+        if optimizer_name.lower() == 'adam':
+            optimizer = optim.Adam(
                 params=network.parameters(),
                 lr=learning_rate,
                 weight_decay=weight_decay
             )
 
-        if name.lower() == 'adamax':
-            return optim.Adamax(
-                params=network.parameters(),
-                lr=learning_rate,
-                weight_decay=weight_decay
-            )
-
-        if name.lower() == 'adadelta':
-            return optim.Adadelta()
-        
-        if name.lower() == 'rmsprop':
-            return optim.RMSprop(
+        elif optimizer_name.lower() == 'adamax':
+            optimizer = optim.Adamax(
                 params=network.parameters(),
                 lr=learning_rate,
                 weight_decay=weight_decay
             )
         
-        if name.lower() == 'sgd':
-            return optim.SGD(
+        elif optimizer_name.lower() == 'rmsprop':
+            optimizer = optim.RMSprop(
+                params=network.parameters(),
+                lr=learning_rate,
+                weight_decay=weight_decay
+            )
+        
+        elif optimizer_name.lower() == 'sgd':
+            optimizer = optim.SGD(
                 params=network.parameters(),
                 weight_decay=weight_decay,
                 learning_rate=learning_rate,
@@ -104,6 +178,15 @@ class ContrastiveTrainer(base.BaseTrainer):
             )
         else:
             raise NotImplemented()
+
+        if (self.distributed == True):
+            optimizer = zero.ZeroRedundancyOptimizer(
+                params=network.parameters(),
+                optimizer_class=optimizer_name,
+                lr=learning_rate,
+                weight_decay=weight_decay,
+            )
+        return optimizer
 
     def configure_loader(self, 
         dataset: data.Dataset, 
@@ -206,7 +289,14 @@ class ContrastiveTrainer(base.BaseTrainer):
                 validation_dataset=validation_dataset
             )
         ]
-
+        if self.distributed:
+            dist_callback = call_dist.DistributedTrainCallback(
+                rank=self.dist_rank,
+                backend=self.dist_backend,
+                world_size=self.world_size,
+                group_name=self.group_name
+            )
+            self.callbacks.append(dist_callback)
 
     def configure_seed(self, input_seed: int):
         """
@@ -254,8 +344,6 @@ class ContrastiveTrainer(base.BaseTrainer):
 
     def train(self, train_dataset: dataset.Dataset):
 
-        self.on_init_start()
-
         global_step = 0
         overall_loss = float('inf')
 
@@ -288,10 +376,15 @@ class ContrastiveTrainer(base.BaseTrainer):
                     pair_v_emb, pair_t_emb  = self.predict_embs(pair)
                     neg_pair_v_emb, neg_pair_t_emb = self.predict_embs(neg_pair)
                     
-                    img_loss = self.loss_function(pos_pair_v_emb, pair_v_emb, neg_pair_v_emb)
-                    text_loss = self.loss_function(pos_pair_t_emb, pair_t_emb, neg_pair_t_emb)
+                    img_loss = self.pair_loss_function(pos_pair_v_emb, pair_v_emb, neg_pair_v_emb)
+                    text_loss = self.pair_loss_function(pos_pair_t_emb, pair_t_emb, neg_pair_t_emb)
+                    modal_sim_loss = self.modal_loss_function(pair_v_emb, pair_t_emb)
+                    
+                    # overall loss function: summary of image similarity pairs, text similarity pairs
+                    # and similarity between modalities
 
-                    overall_loss = img_loss.item() + text_loss.item()
+                    overall_loss = img_loss.item() + text_loss.item() + modal_sim_loss.item()
+                    
                     # in case we are using single gpu, we traverse
                     # over all computed loss (for each modality) and after each update
                     # clear gradients 
@@ -320,6 +413,7 @@ class ContrastiveTrainer(base.BaseTrainer):
             self.on_train_epoch_end(global_step=global_step)
 
             if self.stop: break
+        self.tearDown()
 
     def find_similarity(self, embeddings_group):
         """
@@ -356,4 +450,3 @@ class ContrastiveTrainer(base.BaseTrainer):
             metric = self.find_similarity(cat_embeddings)
             output_metrics[label] = metric
         return output_metrics
-

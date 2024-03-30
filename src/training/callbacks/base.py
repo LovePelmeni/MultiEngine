@@ -1,4 +1,7 @@
-from abc import ABC, abstractmethod 
+from abc import (
+    ABC, 
+    abstractmethod
+)
 import typing
 import pathlib
 import os
@@ -35,6 +38,10 @@ class BaseCallback(ABC):
     @abstractmethod
     def on_train_epoch_end(self, **kwargs):
         pass 
+
+    @abstractmethod
+    def on_train_end(self, **kwargs):
+        pass
 
     @abstractmethod
     def on_validation_start(self, **kwargs):
