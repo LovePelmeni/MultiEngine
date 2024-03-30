@@ -94,3 +94,16 @@ class BaseTrainer(base.TrainerCallbackMixin):
             this is just empty shell, which is reinitilized in
             other classes.
         """
+
+    @abstractmethod
+    def stop(self, **kwargs):
+        """
+        Performs stop of the training process.
+        Warning:
+            this is just empty shell, which is reinitialized in
+            other classes.
+        """
+
+
+
+
