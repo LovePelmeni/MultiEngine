@@ -20,6 +20,7 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
+
 class EncoderTrainer(base.BaseTrainer):
     """
     Trainer pipeline for 
@@ -33,8 +34,8 @@ class EncoderTrainer(base.BaseTrainer):
         network_config: typing.Dict,
         optimizer_config: typing.Dict,
         lr_scheduler_config: typing.Dict,
-        snapshot_config: typing.Dict,
-        early_stopping_config: typing.Dict,
+        snapshot_config: typing.Dict, 
+        early_stopping_config: typing.Dict, 
         loader_config: typing.Dict,
         inference_device: str,
         distributed: bool = False,

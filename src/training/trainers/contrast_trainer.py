@@ -6,6 +6,7 @@ from src.training.callbacks import (
     devices,
     early_stopping,
     logistics,
+    network_state,
     distributed as call_dist
 )
 import numpy
@@ -265,6 +266,7 @@ class ContrastiveTrainer(base.BaseTrainer):
         report_log_dir = os.path.join(base_log_dir, "reports")
         cpu_log_dir = os.path.join(base_log_dir, "cpu")
         gpu_log_dir = os.path.join(base_log_dir, "gpu")
+        network_monitor_log_dir = os.path.join(base_log_dir, "network_health")
 
         snapshot_log_dir = os.path.join(base_log_dir, "snapshots")
         snapshot_ext = self.snapshot_config.get("snapshot_ext")
@@ -278,6 +280,13 @@ class ContrastiveTrainer(base.BaseTrainer):
             logistics.LogisticsCallback(log_dir=report_log_dir),
             devices.CPUInferenceCallback(log_dir=cpu_log_dir),
             devices.GPUInferenceCallback(log_dir=gpu_log_dir),
+
+            network_state.NetworkMonitoringCallback(
+                log_dir=network_monitor_log_dir,
+                weight_param_tag='weights',
+                bias_param_tag='biases'
+            ),
+            
             checkpoints.SnapshotCallback(
                 snapshot_ext=snapshot_ext, 
                 save_every=save_every, 
@@ -404,7 +413,16 @@ class ContrastiveTrainer(base.BaseTrainer):
             # we pass argument 'trainer' to this event
             # in case early stopping callback want to say us, that training is done.
             # It will update flag 'stop' to True
-            self.on_train_batch_end(trainer=self)
+            
+            # TODO: 
+            # fix eval_metric and learning rate attributes
+            
+            self.on_train_batch_end(
+                trainer=self, 
+                train_loss=curr_loss, 
+                eval_metric=None,
+                learning_rate=self.optimizers[0].param_groups[0]['lr']
+            )
             
             # global step is simply used to track current epoch.
             self.on_validation_start(global_step=global_step)
