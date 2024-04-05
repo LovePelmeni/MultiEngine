@@ -4,6 +4,7 @@ for evaluating embedding similarity search
 algorithms.
 """
 import torch
+import typing
 from torch import nn
 
 class MeasureFactorialRank(nn.Module):
@@ -69,31 +70,30 @@ class PrecisionAtK(nn.Module):
 
     def forward(self, predicted_ranks: torch.Tensor, true_ranks: torch.Tensor):
         precision = self.calculate_rank_precision(predicted_ranks, true_ranks)
-        return precision 
+        return precision
 
 
-class MeanAveragePrecision(nn.Module):
+class TopK(nn.Module):
     """
-    Implementation of the Mean Average Precision at K
-    evaluation metric
-    """
-    def __init__(self, k: int, conf_threshold: float):
-        super(MeanAveragePrecision, self).__init__()
-        self.conf_threshold = conf_threshold 
-        self.k = k
+    Implementation of the top K similarity
+    evaluation metric.
 
-class MeanAverageRecall(nn.Module):
+    Parameters:
+    -----------
+        n_neighbors (int) - number of nearest neighbors to search for in the dataset.
     """
-    Implementation of the Mean Average Recall at K
-    evaluation metric
-    """
-    def __init__(self, k: int, conf_threshold: float):
-        super(MeanAverageRecall, self).__init__()
-        self.k = k
-        self.conf_threshold = conf_threshold
+    def __init__(self, n_neighbors: int):
+        super(TopK, self).__init__()
+        self.n_neighbors = n_neighbors 
 
-    def forward(self, 
-        predicted_ranks: torch.Tensor, 
-        true_ranks: torch.Tensor
+    def forward(self,
+        sorted_pred_labels: typing.List[int], 
+        target_label: int
     ):
-        pass
+        top_k_labels = torch.as_tensor(sorted_pred_labels[:self.n_neighbors])
+        top_k_labels.requires_grad = False
+        accuracy = (
+            top_k_labels[top_k_labels == target_label].to(
+            torch.uint8).sum() / self.n_neighbors
+        )
+        return accuracy
