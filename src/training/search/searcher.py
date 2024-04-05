@@ -1,311 +1,153 @@
+from urllib.parse import scheme_chars
 import faiss
 import typing
-import abc
 import torch
-import numpy
 import logging
-import pathlib
+from torch import nn
 from src.training.search import search_dataset
+import pathlib
+import numpy
+import pandas
 
 logger = logging.getLogger(name='search_logger')
 file_handler = logging.FileHandler(filename="search_logs.log")
 logger.addHandler(file_handler)
 
-
-class BaseVectorQuantizer(abc.ABC):
+class RecommenderSearchIndex(nn.Module):
     """
-    Base module for quantizing
-    embedding vectors to a lower
-    representation state
+    Module for similarity search of similar
+    target embeddings.
+
+    Parameters:
+    ----------
+        input_dim - input dimension of the embedding
+        inv_centroids - number of centroids for Inverted File Index
+        top_k - number of similar vectors to search for.
+        pq_nbits - number of bits for Product Quantization
+        pq_subvecs - number of subvectors for Product Quantization
+        top_n_centroids - number of centroids to search from in Inverted File Index.
     """
-    @abc.abstractproperty
-    def _quantizer(self) -> faiss.Quantizer:
-        raise NotImplementedError()
- 
-    @abc.abstractclassmethod
-    def from_config(cls, config: typing.Dict):
-        """
-        Loads vector quantizer from specified
-        configuration.
+    def __init__(self,
+        input_dim: int, 
+        top_k: int,
+        inv_centroids: int, 
+        pq_nbits: int, 
+        pq_subvecs: int,
+        top_n_centroids: int, 
+    ):
+        super(RecommenderSearchIndex, self).__init__()
+        assert self.input_dim % pq_subvecs == 0 
+        self.input_dim = input_dim
+        self.n_subvecs: int = pq_subvecs
+        self.top_k: int = top_k
+        self.index = faiss.index_factory(
+        "IVF%s, PQ%sx%s" % (inv_centroids, pq_subvecs, pq_nbits))
+        ivf_index = faiss.extract_index_ivf(self.index)
+        ivf_index.nprobe = top_n_centroids
 
-        Parameters:
-        -----------
-            config - (dict) - dictionary, containing 
-            parameters.
-        """
-    @abc.abstractmethod
-    def save(self, index_path: typing.Union[str, pathlib.Path]):
-        """
-        Saves quantizer under 'name.index'
-        application.
-        
-        Parameters:
-        -----------
-            index_path - destination path to save index.
-        """
-
-    @abc.abstractmethod
-    def shrink(self, embedding: numpy.ndarray):
-        """
-        Shrinks embedding vector to a lower
-        dimensional representation.
-
-        Parameters:
-        -----------
-            embedding - embedding to shrink (must match in dim)
-        """
-
-
-class BaseSimilaritySearcher(abc.ABC):
-    """
-    Base module for searching similar
-    embedding vectors, that are spatial
-    representations of products or items to recommend.
-    """
-    @abc.abstractproperty 
-    def _index(self) -> faiss.Index:
-        raise NotImplementedError()
-
-    @abc.abstractclassmethod
-    def from_config(cls, config: typing.Dict):
-        """
-        Loads pretrained similarity search index
-        instance, based on the specified configuration.
-        
-        Parameters:
-        -----------
-            config - typing.Dict object, which contains
-            parameters of the similarity search module.
-        """
-
-    @abc.abstractmethod
-    def train(self, train_embeddings: numpy.ndarray):
-        """
-        In case Search Index is trainable,
-        we should provide method to train
-        it on a given set of 'embedding' vectors
-        """
+    def forward(self, input_embedding: torch.Tensor):
         if not self.index.is_trained:
-            if hasattr(self.index, 'add'):
-                self.index.add(train_embeddings)
+            raise ValueError("index is not trained to make predictions.")
+        try:
+            assert input_embedding.shape[1] % self.pq_subvecs == 0
+            _, indices = self.index.search(input_embedding, self.top_k)
+            return indices
+        except(AssertionError):
+            raise RuntimeError("invalid dimensionality of the output vector")
 
-    @abc.abstractmethod
-    def search(self, embedding: torch.Tensor):
-        """
-        Performs index search to
-        get top K similar embeddings.
-        
-        Parameters:
-        ----------
-            embedding - target embedding
-            item_info - additional information about item.
-        """
+        except(Exception) as err:
+            logger.error(err)
+            return []
 
-class FlatSearcher(BaseSimilaritySearcher):
+
+class MetadataPostFiltering(nn.Module):
     """
-    Base module for searching similar 
-    embedding vectors using L2 euclidian distance norm
+    Metadata-based post filtering module
+    for controlling and maintaining relevance level 
+    of the documents after nearest has been found.
+
+    Parameters:
+    -----------
+        meta_dataset - metadata dataframe.
+        rec_dataset - dataset of numpy embedding vectors
     """
-    def __init__(self):
-        super(BaseSimilaritySearcher, self).__init__()
-
-    @classmethod
-    def from_config(cls, config: typing.Dict):
-
-        number_of_suggestions = config.get("number_of_suggestions")
-
-        if 'index_path' in config:
-            index_path = config.get("index_path")
-            cls._index  = faiss.read_index(index_path)
-        else:
-            dim = config.get("embedding_dim")
-            cls._index = faiss.IndexFlatL2(dim)
-
-        cls._number_of_suggestions = number_of_suggestions
-
-        # loading train dataset
-        dataset_path = config.get("dataset_path")
-        access_mode = config.get("access_mode")
-        data_shape = config.get("data_shape")
-        data_type = config.get("data_type")
-
-        cls._dataset = search_dataset.SearchVectorDataset(
-            dataset_path=dataset_path,
-            access_mode=access_mode,
-            data_shape=data_shape,
-            data_type=data_type
-        )
-
-        if not cls._index.is_trained:
-            cls._index.train(cls._dataset._mem_vec_data)
-            cls._index.add(cls._dataset.mem_vec_data)
-        return cls()
-        
-    def search(self, embedding: torch.Tensor) -> typing.List[int]:
-        _, candidate_indices = self._index.search(
-            embedding, 
-            self._number_of_suggestions
-        )
-        return candidate_indices
-        
-class LSHSearcher(BaseSimilaritySearcher):
-    """
-    Module for finding similar embedding vectors
-    based on Local Similarity Hashing (LSH) algorithm.
-    """
-    def __init__(self):
-        super(BaseSimilaritySearcher, self).__init__()
+    def __init__(self, 
+        meta_dataset: pandas.DataFrame, 
+        rec_dataset: numpy.ndarray,
+    ):
+        super(MetadataPostFiltering, self).__init__()
+        self.rec_dataset = rec_dataset 
+        self.meta_dataset = meta_dataset
     
-    @classmethod
-    def from_config(cls, config: typing.Dict):
-
-        index_path = config.get("index_path")
-        num_of_suggestions = config.get("num_suggestions")
-
-        if 'index_path' in config:
-            cls._index = faiss.read_index(index_path)
+    def filter_quantitative(self, indices: list, input_prop: str, greater: bool, threshold: float = None):
+        if greater:
+            return numpy.argwhere(
+                self.meta_dataset[
+                self.meta_dataset[input_prop].iloc[indices] > threshold
+            ])
         else:
-            num_hash_tables = config.get("num_hash_tables")
-            embedding_dim = config.get("embedding_dim")
-            cls._index = faiss.IndexLSH(
-                embedding_dim, 
-                num_hash_tables
-            )
-
-        cls._number_of_suggestions = num_of_suggestions
-
-        # loading train dataset
-        dataset_path = config.get("dataset_path")
-        access_mode = config.get("access_mode")
-        data_shape = config.get("data_shape")
-        data_type = config.get("data_type")
-
-        cls._dataset = search_dataset.SearchVectorDataset(
-            dataset_path=dataset_path,
-            access_mode=access_mode,
-            data_shape=data_shape,
-            data_type=data_type
+            return numpy.argwhere(
+                self.meta_dataset[
+                self.meta_dataset[input_prop].iloc[indices] > threshold
+            ])
+    
+    def filter_qualitative(self, indices: list, input_prop: str, category: str) -> None:
+        new_indices = numpy.argwhere(
+            self.meta_dataset[
+                self.meta_dataset[input_prop].iloc[indices] == category
+            ]
         )
+        return new_indices
 
-        if not cls._index.is_trained:
-            cls._index.train(cls._dataset._mem_vec_data)
-            cls._index.add(cls._dataset.mem_vec_data)
-        return cls()
-
-    def search(self, embedding: torch.Tensor) -> typing.List:
-        _, candidate_indices = self._index.search(
-            embedding, 
-            self._number_of_suggestions
-        )
-        return candidate_indices
-
-class HNSWSearcher(BaseSimilaritySearcher):
+class RecommenderSearchPipeline(nn.Module):
     """
-    Base module for finding similarity
-    between embedding vectors, based on (HNSW)
-    searching algorithm.
+    Pipeline for searching similar embedding vectors
+    in a vector database of products / posts.
+
+    Parameters:
+    -----------
+        init_transform - (faiss.VectorTransform) preprocessing vector transformation.
+        search_index - (faiss.Index) index to use for similarity search.
+        refiner (faiss.IndexRefine) another similarity search algorithm to enhance 
+        search query of the output of 'search_index'.
     """
-    def __init__(self):
-        super(BaseSimilaritySearcher, self).__init__()
+    def __init__(self, 
+        search_index: faiss.Index,
+        search_dataset_path: typing.Union[str, pathlib.Path],
+        label_search_dataset_path: typing.Union[str, pathlib.Path],
+        init_transform: faiss.VectorTransform = None, 
+        refiner: faiss.IndexRefine = None,
+        filtering: MetadataPostFiltering = None
+    ):
+        super(RecommenderSearchPipeline, self).__init__()
 
-    @classmethod
-    def from_config(cls, config: typing.Dict):
-
-        index_path = config.get("index_path")
-        num_of_suggestions = config.get("num_suggestions")
-        dim = config.get("embedding_dim")
-
-        if 'index_path' in config:
-            cls._index = faiss.read_index(index_path)
-        else:
-            # Set HNSW index parameters
-            M = config.get("vertex_connections") # number of connections each vertex will have
-            ef_search = config.get("ef_search") # depth of layers explored during search
-            ef_construction = config.get("ef_construction") # depth of layers explored during index construction
-
-            cls._index = faiss.IndexHNSW(dim, M)
-            cls._index.hnsw.efContruction = ef_construction
-            cls._index.hnsw.efSearch = ef_search
-
-        cls._number_of_suggestions = num_of_suggestions
-        # loading train dataset
-        dataset_path = config.get("dataset_path")
-        access_mode = config.get("access_mode")
-        data_shape = config.get("data_shape")
-        data_type = config.get("data_type")
-
-        cls._dataset = search_dataset.SearchVectorDataset(
-            dataset_path=dataset_path,
-            access_mode=access_mode,
-            data_shape=data_shape,
-            data_type=data_type
+        self.index_transform = init_transform
+        self.search_dataset = search_dataset.SearchVectorDataset(
+            emb_dataset_path=search_dataset_path,
+            label_dataset_path=label_search_dataset_path,
+            access_mode="r",
+            emb_data_shape=None,
+            label_data_shape=None
         )
+        self.filtering = filtering
+        self.search_index = search_index
+        self.refiner = refiner
+    
+    def forward(self, input_embedding: torch.Tensor):
 
-        if not cls._index.is_trained:
-            cls._index.train(cls._dataset._mem_vec_data)
-            cls._index.add(cls._dataset._mem_vec_data)
-        return cls()
+        # apply preprocessing transformation
+        processed_embs = self.index_transform(input_embedding)
+        # make seach query using similarity index
+        searched_query = self.search_index(processed_embs)
 
-    def search(self, embedding: torch.Tensor) -> typing.List:
-        _, candidate_indices = self._index.search(
-            embedding, 
-            self._number_of_suggestions
-        )
-        return candidate_indices
+        # apply post filtering to put away irrelevant embeddings
 
-class IVNFPQQuantizer(BaseSimilaritySearcher):
-    """
-    Base module for finding similar embedding vectors
-    using Inverted File Product Quantization Algorithm.
-    """
-    @classmethod
-    def from_config(cls, config: typing.Dict):
+        # if self.filtering is not None:
+        #     refined_embs_indices = self.filtering(refined_embs_indices)
 
-        num_of_suggestions = config.get("num_suggestions")
+        # apply refinement search 
+        refined_embs_indices = self.refiner(searched_query)
 
-        if 'index_path' in config:
-            index_path = config.get("index_path")
-            cls._quantizer = faiss.read_index(index_path)
-        else:
-            n_centroids = config.get("n_centroids")
-            code_size = config.get("code_size")
-            nbits = config.get("nbits")
-            embedding_dim = config.get('embedding_dim')
-
-            coarse_quantizer = faiss.IndexFlatL2(embedding_dim)
-            cls._quantizer = faiss.IndexIVFPQ(
-                coarse_quantizer, 
-                embedding_dim, 
-                n_centroids, 
-                code_size, nbits
-            )
-        
-        # loading train dataset
-        dataset_path = config.get("dataset_path")
-        access_mode = config.get("access_mode")
-        data_shape = config.get("data_shape")
-        data_type = config.get("data_type")
-
-        cls._dataset = search_dataset.SearchVectorDataset(
-            dataset_path=dataset_path,
-            access_mode=access_mode,
-            data_shape=data_shape,
-            data_type=data_type
-        )
-
-        if not cls.quantizer.is_trained:
-            cls._quantizer.train(cls._dataset._mem_vec_data)
-            cls._quantizer.add(cls._dataset._mem_vec_data)
-
-        cls._number_of_suggestions = num_of_suggestions
-        return cls()
-
-    def shrink(self, embedding: torch.Tensor):
-        _, candidate_indices = self._quantizer(
-            n=self._number_of_suggestions, 
-            x=embedding
-        )
-        return candidate_indices
-
-
-
+        # parsing data from the vector database file
+        output_embs = self.search_dataset._mem_vec_data[refined_embs_indices]
+        return output_embs
