@@ -37,3 +37,8 @@ class ProjectionLayer(nn.Module):
         embeds = self.layer_norm(embed1 + embed2)
         return embeds
 
+
+
+
+
+
