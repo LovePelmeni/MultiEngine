@@ -1,87 +1,201 @@
-from src.training.mugen import multimodal_net
-from training.mugen.image_encoder import ImageEncoder
-from src.training.mugen.text_encoder import TextEncoder
-from src.training.mugen.audio_encoder import AudioEncoder
-from src.training.face_detection import face_detection
-from src.training.classifiers import classifiers
-from src.training.fusions import fusion_layers
+from src.training.multimodal import multimodal_net
+from src.training.search.searcher import (
+    RecommenderSearchPipeline
+)
 import torch
-import json
 import pathlib
-from glob import glob
+from torch import nn
+import typing
+import faiss
+import albumentations
+from src.preprocessing.image_augmentations import ImageIsotropicResize
 
-class InferenceModel(object):
+class InferenceModel(nn.Module):
     """
-    Class for running multimodal inference.
+    Multimodal inference model for 
+    predicting similar products, based on the data
+    from image and text modalities.
+    
     Parameters:
-    ----------
+    -----------
+        mm_config (typing.Dict) - multimodal encoder configuration.
+        search_config (typing.Dict) - similarity search configuration.
     """
-    def from_config(cls, json_inference_config_path: pathlib.Path):
-         
-        config_path = glob(root_dir=json_inference_config_path, recursive=True)
-        json_config = json.load(fp=config_path)
-
-        input_img_size = json_config['detector']['input_image_size']
-        min_face_size = json_config['detector']['min_face_size']
-        face_margin = json_config['detector']['face_margin']
-        detector_inference_device = json_config['detector']['inference_device']
-
-        multimodal_network_inference_device = json_config['multimodal']['inference_device']
-        embedding_length = json_config['multimodal']['embedding_length']
-        output_classes = json_config['multimodal']['output_classes']
-
-        img_input_channels = json_config['multimodal']['image_encoder']['image_input_channels']
-        img_input_size = json_config['multimodal']['image_encoder']['image_input_size']
-
-        image_encoder = ImageEncoder(
-            input_channels=img_input_channels, 
-            input_img_size=img_input_size
-        )
-
-        text_encoder = TextEncoder(
-            
-        )
-
-        audio_encoder = AudioEncoder(
-
-        )
-
-        classifier = classifiers.MultiLayerPerceptronClassifier(
-            embedding_length=embedding_length, 
-            output_classes=output_classes
-        )
-
-        fusion_layer = fusion_layers.AdditiveFusion(latent_size=embedding_length)
-
-        cls.face_detector = face_detection.HumanFaceDetector(
-            input_img_size=input_img_size,
-            min_face_size=min_face_size,
-            face_margin=face_margin,
-            inference_device=detector_inference_device,
-        )
-
-        cls.model = multimodal_net.MultimodalNetwork(
-            image_encoder=image_encoder,
-            text_encoder=text_encoder,
-            audio_encoder=audio_encoder,
-            fusion_layer=fusion_layer,
-            classifier=classifier,
-            embedding_length=embedding_length,
-        ).to(multimodal_network_inference_device)
-
-        return cls()
-
-    def predict(self, 
-        input_video: torch.Tensor = None, 
-        input_audio: torch.Tensor = None,
-        input_text: torch.Tensor = None
+    def __init__(self, 
+        mm_config: typing.Dict,
+        search_config: typing.Dict, 
+        preprocess_config: typing.Dict
     ):
-        # return dict of probabilities, corresponding 
-        # to each individual emotion.
-        predicted_labels = self.model.forward(
-            input_video=input_video, 
-            input_text=input_text,
-            input_audio=input_audio
-        )
-        return predicted_labels
+        super(InferenceModel, self).__init__()
+        # loading image modality preprocessing configuration
+        try:
+            image_resize_height = preprocess_config.get("resize_height")
+            image_resize_width = preprocess_config.get("resize_width")
+            image_normalization_means = preprocess_config.get("norm_means")
+            image_normalization_stds = preprocess_config.get("norm_stds")
+            image_interpolation_up = preprocess_config.get("interpolation_up")
+            image_interpolation_down = preprocess_config.get("interpolation_down")
 
+            self.image_augmentations = albumentations.Compose(
+                transforms=[
+                    ImageIsotropicResize(
+                        new_height=image_resize_height, 
+                        new_width=image_resize_width,
+                        interpolation_up=image_interpolation_up,
+                        interpolation_down=image_interpolation_down,
+                    ),
+                    albumentations.Normalize(
+                        mean=image_normalization_means,
+                        std=image_normalization_stds
+                    )
+                ]
+            )
+        except(KeyError):
+            raise RuntimeError("some crucial image preprocessing config parameters are missing")
+
+        # loading text modality preprocessing augmentations
+        try:
+            pass
+        except(KeyError):
+            raise RuntimeError("some crucial text preprocessing config parameters are missing")
+
+        # loading multimodal encoder network 
+        try:
+            image_encoder_path = mm_config.get("image_encoder_path")
+            text_encoder_path = mm_config.get("text_encoder_path")
+            fusion_layer_path = mm_config.get("fusion_layer_path")
+            embedding_length: int = mm_config.get("fusion_values")
+
+            self.encoder_net = self.load_multimodal_encoder(
+                image_encoder_path=image_encoder_path,
+                text_encoder_path=text_encoder_path,
+                fusion_layer_path=fusion_layer_path,
+                embedding_length=embedding_length
+            )
+        except(KeyError):
+            raise RuntimeError("some crucial multimodal config parameters are missing")
+        
+        # loading similarity search index
+        try:
+            search_index_path = search_config.get("search_index_path")
+            refiner_path = search_config.get("refiner_path")
+            search_data_path = search_config.get("search_data_path")
+            metadata_data_path = search_config.get("metadata_data_path")
+
+            pretrained_search_index = faiss.read_index(search_index_path)
+            pretrained_refiner = faiss.read_index(refiner_path)
+
+            self.searcher = self.load_similarity_rec_search(
+                pretrained_search_index=pretrained_search_index,
+                pretrained_pred_refiner=pretrained_refiner,
+                search_dataset_path=search_data_path,
+                metadata_search_dataset_path=metadata_data_path
+            )
+        except(KeyError):
+            raise RuntimeError("some crucial similarity search parameters are missing")
+
+    def load_multimodal_encoder(self, 
+        image_encoder_path: typing.Union[str, pathlib.Path], 
+        text_encoder_path: typing.Union[str, pathlib.Path],
+        fusion_layer_path: typing.Union[str, pathlib.Path],
+        embedding_length: int
+    ):
+        """
+        Loads multimodal recommendation network, based
+        on the provided resource paths.
+        
+        Parameters:
+        -----------
+            image_encoder_path - path to the image encoder network 
+            text_encoder_path - path to the text encoder network 
+            fusion_layer_path - path to the pretrained fusion layer.
+            embedding_length - embedding length to use for intermediate
+            representation.
+        """
+        pretrained_image_encoder = torch.load(image_encoder_path)
+        pretrained_text_encoder = torch.load(text_encoder_path)
+        pretrained_fusion_layer = torch.load(fusion_layer_path)
+
+        return multimodal_net.MultimodalNetwork(
+            image_encoder=pretrained_image_encoder,
+            text_encoder=pretrained_text_encoder,
+            fusion_layer=pretrained_fusion_layer,
+            embedding_length=embedding_length,
+        )
+    
+    def load_similarity_rec_search(self, 
+        pretrained_search_index: faiss.Index,
+        pretrained_pred_refiner: faiss.Index,
+        search_dataset_path: typing.Union[str, pathlib.Path],
+        metadata_search_dataset_path: typing.Union[str, pathlib.Path],
+        init_transform=None,
+    ):
+        """
+        Loads similarity search recommendation 
+        algorithm for finding similar product embeddings.
+        
+        Parameters:
+        -----------
+            pretrained_search_index - faiss.Index or Composite Index, pretrained
+            on a set of product embeddings.
+            s
+        """
+        return RecommenderSearchPipeline(
+            search_index=pretrained_search_index,
+            search_dataset_path=search_dataset_path,
+            metadata_search_dataset_path=metadata_search_dataset_path,
+            init_transform=init_transform,
+            refiner=pretrained_pred_refiner,
+            filtering=None
+        )
+
+    def prep_image_data(self, input_images: typing.List[torch.Tensor]):
+        """
+        Prepares input inference data before passing
+        it to the model.
+        
+        Parameters:
+        ----------
+            input_images - typing.List - list of input images to apply
+        """
+        preped_images = []
+        for image in input_images:
+            prep_image = self.image_augmentations(image)
+            prep_image = torch.from_numpy(
+            prep_image).permute(2, 0, 1).unsqueeze(0)
+            preped_images.append(prep_image)
+        return preped_images
+            
+    def prep_text_data(self, input_texts: typing.List[str]):
+        """
+        Application string container string validator.
+        
+        Parameters:
+        -----------
+            input_texts - list of text descriptions, corresponding
+            to image modality.
+        """
+        preped_texts = []
+        for text in input_texts:
+            prep_text = self.text_augmentations(text)
+            preped_texts.append(prep_text)
+        return preped_texts
+
+    def forward(self, 
+        input_image: torch.Tensor, 
+        input_description: torch.Tensor
+    ):
+        preped_image = self.prep_image_data(input_images=[input_image])
+        preped_text = self.prep_text_data(input_texts=[input_description])
+
+        output_emb: torch.Tensor = self.encoder_net.forward(
+            input_image=preped_image,
+            input_text=preped_text
+        )
+
+        similar_products: typing.List[typing.Dict] = (
+            self.searcher.forward(
+            input_embedding=output_emb)
+        )
+
+        return similar_products
