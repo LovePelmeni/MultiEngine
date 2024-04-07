@@ -1,5 +1,8 @@
 from torch import nn
 import torch
+from src.multimodal.image_encoder import ImageEncoder
+from src.multimodal.text_encoder import TextEncoder 
+from src.multimodal.fusions.attention_fusion import AttentionFusion
 
 class MultimodalNetwork(nn.Module):
     """
@@ -16,9 +19,9 @@ class MultimodalNetwork(nn.Module):
         fusion_layer - layer for fusing embeddings and aligning them accordingly.
     """
     def __init__(self, 
-        image_encoder: nn.Module, 
-        text_encoder: nn.Module, 
-        fusion_layer: nn.Module
+        image_encoder: ImageEncoder, 
+        text_encoder: TextEncoder, 
+        fusion_layer: AttentionFusion
     ):
         super(MultimodalNetwork, self).__init__()
 
