@@ -6,7 +6,10 @@ from src.training.callbacks import (
     devices,
     early_stopping,
     logistics,
+<<<<<<< HEAD
     network_state,
+=======
+>>>>>>> emb_search
     distributed as call_dist
 )
 import numpy
@@ -25,6 +28,7 @@ import torch
 from torch import optim
 from torch.optim import lr_scheduler
 from torch import device
+from dataclasses import dataclass
 
 @dataclasses.dataclass
 class TrainerConfig(object):
@@ -93,6 +97,7 @@ class ContrastiveTrainer(base.BaseTrainer):
         self.modal_loss_function = self.load_loss(modal_loss_name)
         self.eval_metric = self.load_metric(eval_metric_name)
         self.stop = False # status code to urgently stop training
+<<<<<<< HEAD
 
     def configure_setup(self, train_configs: typing.List[TrainerConfig]):
         """
@@ -143,6 +148,58 @@ class ContrastiveTrainer(base.BaseTrainer):
     
     def configure_optimizer(self, network: nn.Module, optimizer_config: typing.Dict) -> nn.Module:
 
+=======
+
+    def configure_setup(self, train_configs: typing.List[TrainerConfig]):
+        """
+        Configures networks, optimization algorithms and
+        learning rate schedulers.
+        
+        Parameters:
+        -----------
+            train_configs - list of TrainerConfig objects
+        """
+        self.networks = []
+        self.optimizers = []
+        self.schedulers = []
+
+        for config in train_configs:
+            network = self.configure_network(
+                network=config.network,
+                device_ids=config.train_devices,
+                output_device=config.output_device
+            )
+            optimizer = self.configure_optimizer(
+                network=network,
+                optimizer_config=config.optimizer_config
+            )
+            lr_scheduler = self.configure_lr_scheduler(
+                optimizer=optimizer,
+                lr_scheduler_config=config.lr_scheduler_config
+            )
+            self.networks.append(network)
+            self.optimizers.append(optimizer)
+            self.schedulers.append(lr_scheduler)
+        
+    def configure_network(self, 
+        network: nn.Module, 
+        device_ids: typing.List[torch.device],
+        output_device: str = 'cpu'
+    ):
+        if (self.distributed == True):
+            conf_network = DDP(
+                network, 
+                device_ids=device_ids, 
+                output_device=output_device
+            )
+        else:
+            device = device_ids[0]
+            conf_network = network.to(device=device)
+        return conf_network
+    
+    def configure_optimizer(self, network: nn.Module, optimizer_config: typing.Dict):
+
+>>>>>>> emb_search
         optimizer_name = optimizer_config.get("name")
         learning_rate = optimizer_config.get("learning_rate")
         weight_decay = optimizer_config.get("weight_decay", None)
@@ -354,21 +411,20 @@ class ContrastiveTrainer(base.BaseTrainer):
     def train(self, train_dataset: dataset.Dataset):
 
         global_step = 0
-        curr_loss = float('inf')
+        overall_loss = float('inf')
 
         self.network.train()
         loader = self.configure_loader(train_dataset)
         self.on_init_end()
 
         for epoch in range(self.max_epochs):
-            self.on_train_batch_start()
 
-            for videos, texts, audios, labels in tqdm(
+            for images, texts, audios, labels in tqdm(
                     loader, 
                     desc='epoch: %s; curr_loss: %s;' % (
-            epoch, curr_loss)):
+            epoch, overall_loss)):
                 
-                samples = list(zip(videos, texts, audios))
+                samples = list(zip(images, texts, audios))
 
                 # finding hard pairs of (pos_sample, sample, neg_sample) for
                 # contrastive learning training, using current batch
@@ -376,10 +432,17 @@ class ContrastiveTrainer(base.BaseTrainer):
                     batch_data=samples, 
                     batch_labels=labels
                 )
-                
+                # each pair follow format: (image, text), for both positive, main and negative.
                 for pos_pair, pair, neg_pair in hard_pairs:
-
+                    
+                    self.on_train_batch_start()
                     pos_pair_v_emb, pos_pair_t_emb = self.predict_embs(pos_pair)
+                    self.on_train_batch_end()
+
+<<<<<<< HEAD
+                    pos_pair_v_emb, pos_pair_t_emb = self.predict_embs(pos_pair)
+=======
+>>>>>>> emb_search
                     pair_v_emb, pair_t_emb  = self.predict_embs(pair)
                     neg_pair_v_emb, neg_pair_t_emb = self.predict_embs(neg_pair)
                     
@@ -396,9 +459,13 @@ class ContrastiveTrainer(base.BaseTrainer):
                     # over all computed loss (for each modality) and after each update
                     # clear gradients 
 
+<<<<<<< HEAD
                     overall_loss.backward()
 
                     for idx in range(len(self.optimizers)):
+=======
+                    for idx, loss in enumerate([img_loss, text_loss]):
+>>>>>>> emb_search
 
                         self.optimizers[idx].step()
 
@@ -413,6 +480,7 @@ class ContrastiveTrainer(base.BaseTrainer):
             # we pass argument 'trainer' to this event
             # in case early stopping callback want to say us, that training is done.
             # It will update flag 'stop' to True
+<<<<<<< HEAD
             
             # TODO: 
             # fix eval_metric and learning rate attributes
@@ -423,6 +491,9 @@ class ContrastiveTrainer(base.BaseTrainer):
                 eval_metric=None,
                 learning_rate=self.optimizers[0].param_groups[0]['lr']
             )
+=======
+            self.on_train_epoch_end(trainer=self, overall_loss=overall_loss)
+>>>>>>> emb_search
             
             # global step is simply used to track current epoch.
             self.on_validation_start(global_step=global_step)
@@ -432,37 +503,25 @@ class ContrastiveTrainer(base.BaseTrainer):
             if self.stop: break
         self.tearDown()
 
-        return curr_loss
-
-    def evaluate(self, validation_dataset: dataset.Dataset):
-        
-        with torch.no_grad():
-            loader = self.configure_loader(validation_dataset)
-
-            video_metrics = []
-            text_metrics = []
-            audio_metrics = []
-
-            for videos, texts, audios, _ in loader:
-
-                sample = list(zip(videos, texts, audios))
-                hard_pairs = self.contrastive_sampler.hard_mining(sample)
-                
-                for pos_sample, sample, neg_sample in hard_pairs:
-
-                    pos_emb = self.predict_embs(pos_sample)
-                    pred_emb = self.predict_embs(sample)
-                    neg_emb = self.predict_embs(neg_sample)
-                    
-                    video_metric = self.eval_metric(
-                        pred_emb[0], pos_emb[0], neg_emb[0])
-
-                    audio_metric = self.eval_metric(
-                        pred_emb[1], pos_emb[1], neg_emb[1])
-
-                    text_metric = self.eval_metric(
-                        pred_emb[2], pos_emb[2], neg_emb[2]
+    def find_similarity(self, embeddings_group):
+        """
+        Finds similarity between embeddings in a given
+        group.
+        Parameters:
+        -----------
+            embeddings_group - list of similar embeddings to compare
+        """
+        total_sim = []
+        for emb1 in range(len(embeddings_group)):
+            emb_sims = []
+            for emb2 in range(emb1, len(embeddings_group)):
+                sim = (
+                    torch.dot(embeddings_group[emb1], embeddings_group[emb2])
+                    ) / (
+                        torch.norm(embeddings_group[emb1]) 
+                        * torch.norm(embeddings_group[emb2])
                     )
+<<<<<<< HEAD
                 video_metrics.append(video_metric)
                 text_metrics.append(text_metrics)
                 audio_metrics.append(audio_metrics)
@@ -488,4 +547,22 @@ class ContrastiveTrainer(base.BaseTrainer):
         return output_metrics
 
 
+=======
+                emb_sims.append(sim.item())
+            total_sim.append(numpy.mean(emb_sims))
+        return numpy.mean(total_sim)
+>>>>>>> emb_search
 
+    def sliced_evaluate(self, embeddings: typing.List[torch.Tensor], labels: typing.List):
+        """
+        Evaluates embeddings on individual slices of data,
+        based on the label.
+        """
+        output_metrics: typing.Dict[str, float] = {}
+        unique_labels = numpy.unique(labels)
+        for label in unique_labels:
+            indices = numpy.where(labels == label)[0]
+            cat_embeddings = [emb for emb in embeddings if emb in indices]
+            metric = self.find_similarity(cat_embeddings)
+            output_metrics[label] = metric
+        return output_metrics
