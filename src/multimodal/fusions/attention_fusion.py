@@ -42,6 +42,8 @@ class AttentionFusion(nn.Module):
 
         if fusion_weights is not None:
             self.load_fusion_state(fusion_state=fusion_weights)
+        
+        self.attention.eval()
 
     def load_fusion_state(self, fusion_state: nn.Module):
         self.attention = self.attention.load_state_dict(state_dict=fusion_state)
@@ -67,7 +69,6 @@ class AttentionFusion(nn.Module):
         
         weighted_sum_tensor = torch.sum(torch.stack(output_projections), dim=0)
         return weighted_sum_tensor
-
 
 
 
