@@ -1,0 +1,44 @@
+FROM --platform=arm64 python:3.9-slim-bullseye
+LABEL author=kirklimushin@gmail.com
+
+ARG SUPERUSER_USERNAME=python_user
+
+# setting up environment variables
+ENV POETRY_VIRTUALENVS_CREATE=false
+ENV PYTHONUNBUFFERED=0
+
+# setting up custom user group
+RUN useradd -ms /bin/bash ${SUPERUSER_USERNAME}
+RUN useradd -aG sudo ${SUPERUSER_USERNAME}
+
+# setting up custom super user
+WORKDIR /project/dir/${SUPERUSER_USERNAME}
+
+# setting up logging directory
+RUN mkdir ./logs
+
+# copying required data directories
+
+COPY ./weights ./weights
+COPY ./src ./src
+COPY ./requirements/prod_requirements.txt ./prod_requirements.txt
+COPY ./tests ./tests
+COPY ./configs ./configs
+COPY ./deployment ./deployment
+
+# installing necessary packages
+RUN pip install --upgrade pip
+
+# Installing poetry manager for Python
+RUN pip install poetry --upgrade
+
+# Updating Production Requirements for the Project using Poetry
+
+RUN poetry install --no-dev 
+
+# Export production requirements using Poetry
+RUN poetry export --format=requirements.txt --output prod_requirements.txt --without-hashes
+RUN pip install -r prod_requirements.txt
+
+# running entrypoint script
+ENTRYPOINT ["sh", "entrypoint.sh"]
