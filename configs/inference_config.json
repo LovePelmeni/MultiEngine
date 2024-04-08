@@ -1,0 +1,17 @@
+{
+    "image_encoder": {
+        "weight_path": "./weights/image_encoder.pth"
+    },
+    "text_encoder": {
+        "weight_path": "./weights/text_encoder.pth"
+    },
+    "fusion_layer": {
+        "weight_path": "./weights/fusion.pth"
+    },
+    "search": {
+        "index_path": "./weights/index/ra",
+        "index_dataset_path": "./datasets/index_emb_dataset.fvecs",
+        "index_metadata_dataset_path": "./datasets/index_metadata_dataset.fvecs"
+    },
+    "embedding_length": 768
+}
