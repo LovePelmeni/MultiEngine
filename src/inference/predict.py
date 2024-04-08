@@ -1,5 +1,5 @@
-from src.training.multimodal import multimodal_net
-from src.training.search.searcher import (
+from src.multimodal import multimodal_net
+from src.search.searcher import (
     RecommenderSearchPipeline
 )
 import torch
