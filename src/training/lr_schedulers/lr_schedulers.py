@@ -1,5 +1,5 @@
-from torch.optim.lr_scheduler import _LRScheduler 
 from bisect import bisect_right
+from torch.optim.lr_scheduler import _LRScheduler
 import typing
 import numpy
 
@@ -83,26 +83,3 @@ class ExponentialLRScheduler(_LRScheduler):
             base_lr * numpy.exp(-self.gamma*self.last_epoch)
             for base_lr in self.base_lrs
         ]
-
-class CosineAnnealingLRScheduler(_LRScheduler):
-    """
-    Implementation of the Cosine Annealing
-    Learning Rate Scheduler.
-    """
-    def __init__(self, 
-        eta_min: float, 
-        eta_max: float, 
-        T: float, 
-        t_i: float, 
-        t_c: float
-    ):
-        self.eta_min: float = eta_min 
-        self.eta_max: float = eta_max
-        self.T: float = T
-        self.t_i: float = t_i
-        self.t_c: float = t_c
-    
-    def get_last_lr(self) -> typing.List[float]:
-        return [base_lr * (
-            self.eta_min + (0.5 * (self.eta_max - self.eta_min) * ) for base_lr in self.base_lrs]
-
