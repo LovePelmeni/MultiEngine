@@ -5,10 +5,9 @@ import torch
 import logging
 import matplotlib.pyplot as plt
 from sklearn.decomposition import (
-    PCA,
-    KernelPCA
+    PCA
 )
-
+from collections import Counter
 
 logger = logging.getLogger(__name__)
 file_handler = logging.FileHandler(filename='fusion_explainer_logs.log')
@@ -24,17 +23,66 @@ class FusionExplainer(object):
     Parameters:
     -----------
         fusion_network - Fusion Mechanism (nn.Module)
+        unique_labels - set of unique labels, that identify categories of 
+        embeddings
     """
-    def __init__(self, fusion_network: nn.Module, unique_labels: typing.List, **kwargs):
-        self.fusion_network = fusion_network
-        self.target_colormap = {
-            label: numpy.random.randint(size=3, low=0, high=255)
-            for label in unique_labels
-        }
+    def __init__(self, distance_metric: typing.Callable, unique_labels: typing.List, **kwargs):
+        self.emb_kmeans = EmbeddingKMeans(len(unique_labels), distance_metric)
+        self.emb_dim_reducer = PCA(n_components=2)
+
+    def _compute_cluster_accuracy(self, 
+        cluster_labels: typing.List[typing.Union[str, int]],
+        mode: typing.Union[str, int]
+    ) -> typing.List[str]:
+        """
+        Computes objects accuracy within a single 
+        cluster of embeddings.
+        """
+        if not all([type(label) == type(mode) for label in cluster_labels]):
+            raise TypeError("mode type does not match type of cluster labels")
+        acc = 0
+        for label in cluster_labels:
+            acc += int(label == mode)
+        return acc / len(cluster_labels)
+    
+    def analyze_clustered_fused_embeddings(self, 
+        embeddings: typing.List, 
+        labels: typing.List
+    ):
+        """
+        Clusters embeddings into groups and
+        and analyzes accuracy percentage of how
+        good these clusters are formed.
+
+        Parameters:
+        ----------- 
+            embeddings - list of torch.Tensor embedding vectors, obtained after fusion.
+            labels - list of corresponding labels in the same order (either string or integer)
+        """
+        cluster_samples = list(zip(labels, embeddings))
+        clusters = self.emb_kmeans.fit(cluster_samples)
+        clusters = [
+            [cluster_samples[idx] for idx in cluster] 
+            for cluster in self.emb_kmeans.clusters
+        ]
+        cluster_accs = {}
+        for idx, cluster in enumerate(clusters):
+            mode_label = Counter([sample[0] for sample in cluster]).most_common(1)[0][0]
+            cluster_accs[idx] = {
+                'accuracy': self._compute_cluster_accuracy(
+                [sample[0] for sample in cluster], 
+                mode_label
+            ),
+                'vecs': [cl[1] for cl in cluster],
+                'color': numpy.random.randint(low=0.1, high=1, size=3),
+                'label': mode_label
+            }
+        return cluster_accs
 
     def visualize_predictions(self, 
-        predictions: typing.List, 
-        target_labels: typing.List[int]
+        cluster_infos: typing.Dict,
+        embeddings: typing.List[torch.Tensor],
+        labels: typing.List[typing.Union[str, int]]
     ):
         """
         Visualizes predicted embeddings
@@ -45,21 +93,35 @@ class FusionExplainer(object):
             predictions - predicted fused embedding vectors, merged from multiple modalities
             target_labels - corresponding target labels for each vector.
         """
-        for fused_emb, label in enumerate(predictions, target_labels):
-            color_map = self.target_colormap[label]
-            emb_2d = self.aggregate_embeddings(predicted_emb=fused_emb)
-            plt.scatter(x=emb_2d[0], y=emb_2d[1], color=color_map)
+        agg_vecs = numpy.asarray(self.aggregate_embeddings(
+            predicted_embs=embeddings,
+        ))
+        labels = numpy.asarray(labels)
+        plt.figure(figsize=(15, 15))
+        for config_id in list(cluster_infos.keys()):
+            config = cluster_infos[config_id]
+            label_indices = numpy.where(labels == config.get("label"))[0]
+            color_map = config.get("color")
+            vecs = agg_vecs[label_indices]
+            avg_x = int(sum([vec[0] for vec in vecs]) / len(vecs))
+            avg_y = int(sum([vec[1] for vec in vecs]) / len(vecs))
+            for vec_2d in vecs:
+                plt.scatter(x=vec_2d[0], y=vec_2d[1], color=color_map)
+            plt.annotate(text="acc: %s" % config['accuracy'], 
+                xy=(avg_x, avg_y), xytext=(avg_x, avg_y)
+            )
         plt.show()
 
-    def aggregate_embeddings(self, predicted_emb: torch.Tensor):
+    def aggregate_embeddings(self, predicted_embs: torch.Tensor):
         """
         Aggregates predicted fused embeddings into 2d vectors,
         so they can be mapped onto 2d plane for further analysis.
         """
-        pass
+        red_embs = self.emb_dim_reducer.fit_transform(predicted_embs)
+        return red_embs
 
     def explain(self, 
-        modal_embeddings: typing.List[torch.Tuple[torch.Tensor, torch.Tensor]],
+        modal_embeddings: typing.List,
         target_labels: typing.List[int]):
         """
         Provides qualitative interpretation of the fusion
@@ -71,4 +133,5 @@ class FusionExplainer(object):
         Parameters:
         -----------
         """
-        pass
+        clusters_info = self.analyze_clustered_fused_embeddings(modal_embeddings, target_labels)
+        self.visualize_predictions(clusters_info, embeddings, target_labels)
