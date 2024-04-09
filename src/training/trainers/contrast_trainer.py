@@ -1,4 +1,6 @@
 import dataclasses
+from src.multimodal.image_encoder import ImageEncoder
+from src.multimodal.text_encoder import TextEncoder
 from src.training.trainers import base
 from torch.utils.data import dataset
 from src.training.callbacks import (
@@ -24,7 +26,6 @@ import torch
 from torch import optim
 from torch.optim import lr_scheduler
 from torch import device
-from dataclasses import dataclass
 
 @dataclasses.dataclass
 class TrainerConfig(object):
@@ -145,8 +146,8 @@ class ContrastiveTrainer(base.BaseTrainer):
                 output_device=output_device
             )
         else:
-            device = device_ids[0]
-            conf_network = network.to(device=device)
+            devices = ','.join(device_ids)
+            conf_network = network.to(device=devices)
         return conf_network
     
     def configure_optimizer(self, network: nn.Module, optimizer_config: typing.Dict) -> nn.Module:
@@ -202,6 +203,10 @@ class ContrastiveTrainer(base.BaseTrainer):
         batch_size: int, 
         distributed: bool = False,
         num_replicas: int = 1) -> data.DataLoader:
+        """
+        Configures data loader for
+        training / validation phase.
+        """
         if distributed:
             return data.DataLoader(
                 dataset=dataset,
@@ -325,10 +330,11 @@ class ContrastiveTrainer(base.BaseTrainer):
             to provide an option for debugging tasks
             and may dramatically slow down training speed.
         """
-        torch.manual_seed(seed=input_seed)
+        self.seed_generator = torch.manual_seed(seed=input_seed)
         random.seed(a=input_seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
 
     def configure_loader(self, dataset: dataset.Dataset):
 
@@ -340,12 +346,21 @@ class ContrastiveTrainer(base.BaseTrainer):
                 shuffle=True,
             )
         else:
-            return data.DataLoader(
-                dataset=dataset,
-                batch_size=self.batch_size,
-                num_workers=self.num_workers,
-                pin_memory=True,
-            )
+            if (self.reproducible == True):
+                return data.DataLoader(
+                    dataset=dataset,
+                    batch_size=self.batch_size,
+                    num_workers=self.num_workers,
+                    generator=self.seed_generator,
+                    pin_memory=True
+                )
+            else:
+                return data.DataLoader(
+                    dataset=dataset,
+                    batch_size=self.batch_size,
+                    num_workers=self.num_workers,
+                    pin_memory=True,
+                )
     
     def predict_embs(self, 
         data_sample: typing.Tuple[
@@ -410,17 +425,22 @@ class ContrastiveTrainer(base.BaseTrainer):
                     # overall loss function: summary of image similarity pairs, text similarity pairs
                     # and similarity between modalities
 
-                    overall_loss = img_loss.item() + text_loss.item() + modal_sim_loss.item()
+                    img_encoder_loss = img_loss.item() + modal_sim_loss.item()
+                    text_encoder_loss = text_loss.item() + modal_sim_loss.item()
                     
                     # in case we are using single gpu, we traverse
                     # over all computed loss (for each modality) and after each update
-                    # clear gradients 
-
-                    overall_loss.backward()
+                    # clear gradients
 
                     for idx in range(len(self.optimizers)):
 
-                        self.optimizers[idx].step()
+                        if isinstance(self.networks[idx], ImageEncoder):
+                            img_encoder_loss.backward()
+                            self.optimizers[idx].step()
+
+                        elif isinstance(self.networks[idx], TextEncoder):
+                            text_encoder_loss.backward()
+                            self.optimizers[idx].step()
 
                         if len(self.lr_schedulers) >= (idx+1):
                             self.lr_schedulers[idx].step()
