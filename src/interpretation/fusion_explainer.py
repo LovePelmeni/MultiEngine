@@ -26,8 +26,8 @@ class FusionExplainer(object):
         unique_labels - set of unique labels, that identify categories of 
         embeddings
     """
-    def __init__(self, distance_metric: typing.Callable, unique_labels: typing.List, **kwargs):
-        self.emb_kmeans = EmbeddingKMeans(len(unique_labels), distance_metric)
+    def __init__(self, distance_metric: typing.Callable, unique_labels: int, **kwargs):
+        self.emb_kmeans = EmbeddingKMeans(unique_labels, distance_metric)
         self.emb_dim_reducer = PCA(n_components=2)
 
     def _compute_cluster_accuracy(self, 
@@ -74,7 +74,8 @@ class FusionExplainer(object):
                 mode_label
             ),
                 'vecs': [cl[1] for cl in cluster],
-                'color': numpy.random.randint(low=0.1, high=1, size=3),
+                'color': numpy.round(
+                    numpy.random.randint(low=0, high=255, size=3) / 255, 4),
                 'label': mode_label
             }
         return cluster_accs
@@ -98,6 +99,7 @@ class FusionExplainer(object):
         ))
         labels = numpy.asarray(labels)
         plt.figure(figsize=(15, 15))
+        print([cluster_infos[label]['label'] for label in list(cluster_infos.keys())])
         for config_id in list(cluster_infos.keys()):
             config = cluster_infos[config_id]
             label_indices = numpy.where(labels == config.get("label"))[0]
@@ -106,10 +108,14 @@ class FusionExplainer(object):
             avg_x = int(sum([vec[0] for vec in vecs]) / len(vecs))
             avg_y = int(sum([vec[1] for vec in vecs]) / len(vecs))
             for vec_2d in vecs:
-                plt.scatter(x=vec_2d[0], y=vec_2d[1], color=color_map)
-            plt.annotate(text="acc: %s" % config['accuracy'], 
-                xy=(avg_x, avg_y), xytext=(avg_x, avg_y)
-            )
+                plt.scatter(x=vec_2d[0], y=vec_2d[1], c=color_map)
+        
+        leg = plt.legend([
+            "acc: %s" % cluster_infos[config_id]['accuracy']
+            for config_id in list(cluster_infos.keys())
+        ])
+        for idx in range(len(cluster_infos)):
+            leg.legendHandles[idx].set_color(cluster_infos[idx]['color'])
         plt.show()
 
     def aggregate_embeddings(self, predicted_embs: torch.Tensor):
