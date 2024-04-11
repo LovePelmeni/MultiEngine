@@ -9,6 +9,11 @@ class CNNExplainer(object):
     """
     Base module for interpreting CNN-based
     embedding generation networks.
+
+    Parameters:
+    -----------
+        cnn_encoder - CNN-based encoder network to interpret
+        target_layers - last convolutional layer of the CNN encoder.
     """
     def __init__(self, cnn_encoder: nn.Module, target_layers: typing.List[nn.Module]):
         self.cnn_encoder = cnn_encoder
@@ -50,3 +55,4 @@ class CNNExplainer(object):
             ax[curr_img, 0].imshow(input_img)
             ax[curr_img, 1].imshow(mixed_map)
             curr_img += 1
+
