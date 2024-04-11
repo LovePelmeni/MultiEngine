@@ -25,12 +25,24 @@ class ContrastLoss(nn.Module):
     Loss function for contrastive learning
     of the embedding generation networks
     """
-    def __init__(self, epsilon: float):
+    def __init__(self, 
+        epsilon: float, 
+        pos_margin: float, 
+        neg_margin: float
+    ):
         super(ContrastiveLoss, self).__init__()
         self.epsilon = epsilon
+        self.cont_loss = ContrastiveLoss(
+            pos_margin=pos_margin, 
+            neg_margin=neg_margin,
+
+        )
     
-    def forward(self, pred_emb: torch.Tensor, true_emb: torch.Tensor):
-        pass
+    def forward(self, pred_embs: torch.Tensor, labels: torch.Tensor):
+        return self.cont_loss(
+            pred_embs, 
+            labels
+        )
     
 class TripletLoss(TripletMarginLoss):
     """
