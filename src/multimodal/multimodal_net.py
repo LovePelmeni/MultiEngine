@@ -1,8 +1,9 @@
 from torch import nn
-import torch
 from src.multimodal.image_encoder import ImageEncoder
-from src.multimodal.text_encoder import TextEncoder 
+from src.multimodal.desc_encoder import DescriptionEncoder
+from src.multimodal.title_encoder import TitleEncoder 
 from src.multimodal.fusions.attention_fusion import AttentionFusion
+import torch 
 
 class MultimodalNetwork(nn.Module):
     """
@@ -20,22 +21,41 @@ class MultimodalNetwork(nn.Module):
     """
     def __init__(self, 
         image_encoder: ImageEncoder, 
-        text_encoder: TextEncoder, 
+        desc_encoder: DescriptionEncoder, 
+        title_encoder: TitleEncoder,
         fusion_layer: AttentionFusion
     ):
         super(MultimodalNetwork, self).__init__()
 
         self.image_encoder = image_encoder
-        self.text_encoder = text_encoder
+        self.desc_encoder = text_encoder
+        self.title_encoder = title_encoder
         self.fusion_layer = fusion_layer
 
     def forward(self, 
-        input_image: torch.Tensor = None, 
-        input_text: torch.Tensor = None,
+        input_image: torch.Tensor = None, # tensor of images
+        input_desc: torch.Tensor = None, # tensor of strings
+        input_title: torch.Tensor = None # tensor of strings
     ) -> torch.Tensor:
+        """
+        NOTE:
+            you should pass modalities to fusion
+            in the same order, as was used during training.
+        """
         fused_embs = self.fusion_layer(
-            modalities=[input_image, input_text],
-            classifiers=[self.image_encoder, self.text_encoder]
+            modalities=[
+                input_image, 
+                input_desc, 
+                input_title
+            ],
+            classifiers=[
+                self.image_encoder, 
+                self.desc_encoder, 
+                self.title_encoder
+            ]
         )
         return fused_embs
+
+
+
 

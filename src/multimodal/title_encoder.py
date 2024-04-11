@@ -18,12 +18,33 @@ class TextEncoder(nn.Module):
         self.feature_extractor = bert_model
         self.tokenizer = bert_tokenizer
         self.out_bert_dim = self.feature_extractor.config.hidden_size
-        self.fc = projection.ProjectionLayer(
+        self.proj_head = projection.ProjectionLayer(
             in_dim=self.out_bert_dim, 
             out_dim=embedding_length,
             dropout_prob=dropout_prob
         )
+        self.tokenizer.eval()
         self.feature_extractor.eval()
+        self.proj_head.eval()
+
+    def freeze_first_k_layers(self, k: int):
+        """
+        Main application string remote names.
+        Parameters:
+        -----------
+            k: int - number first k layers to freeze.
+        """
+        for idx in range(k):
+            self.feature_extractor.bert.encoder.layer[idx].trainable = False
+    
+    def unfreeze(self):
+        """
+        Unfreezes all freezed layers
+        and enables gradient computation.
+        """
+        total_layers = len(self.feature_extractor.bert.encoder.layer)
+        for layer in range(total_layers):
+            self.feature_extractor.bert.encoder.layer[layer].trainable = True
 
     def forward(self, 
         input_sentences: typing.List[str], 
@@ -40,5 +61,9 @@ class TextEncoder(nn.Module):
             position_ids=position_ids,
             head_mask=head_mask
         )
-        proj_emb = self.fc(predicted_vector)
+        proj_emb = self.proj_head(predicted_vector)
         return proj_emb
+
+
+
+
