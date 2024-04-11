@@ -1,7 +1,5 @@
 from src.multimodal import multimodal_net
-from src.search.searcher import (
-    RecommenderSearchPipeline
-)
+from src.search.searcher import RecommenderSearchPipeline
 import torch
 import pathlib
 from torch import nn
@@ -62,15 +60,14 @@ class InferenceModel(nn.Module):
         # loading multimodal encoder network 
         try:
             image_encoder_path = mm_config.get("image_encoder_path")
-            text_encoder_path = mm_config.get("text_encoder_path")
+            description_encoder_path = mm_config.get("description_encoder_path")
+            title_encoder_path = mm_config.get("title_encoder_path")
             fusion_layer_path = mm_config.get("fusion_layer_path")
-            embedding_length: int = mm_config.get("fusion_values")
 
             self.encoder_net = self.load_multimodal_encoder(
                 image_encoder_path=image_encoder_path,
                 text_encoder_path=text_encoder_path,
-                fusion_layer_path=fusion_layer_path,
-                embedding_length=embedding_length
+                fusion_layer_path=fusion_layer_path
             )
         except(KeyError):
             raise RuntimeError("some crucial multimodal config parameters are missing")
@@ -96,7 +93,8 @@ class InferenceModel(nn.Module):
 
     def load_multimodal_encoder(self, 
         image_encoder_path: typing.Union[str, pathlib.Path], 
-        text_encoder_path: typing.Union[str, pathlib.Path],
+        title_encoder_path: typing.Union[str, pathlib.Path],
+        desc_encoder_path: typing.Union[str, pathlib.Path],
         fusion_layer_path: typing.Union[str, pathlib.Path],
         embedding_length: int
     ):
@@ -113,12 +111,14 @@ class InferenceModel(nn.Module):
             representation.
         """
         pretrained_image_encoder = torch.load(image_encoder_path)
-        pretrained_text_encoder = torch.load(text_encoder_path)
+        pretrained_description_encoder = torch.load(description_encoder_path)
+        pretrained_title_encoder = torch.load(title_encoder_path)
         pretrained_fusion_layer = torch.load(fusion_layer_path)
 
         return multimodal_net.MultimodalNetwork(
             image_encoder=pretrained_image_encoder,
-            text_encoder=pretrained_text_encoder,
+            description_encoder=pretrained_description_encoder,
+            title_encoder=pretrained_title_encoder,
             fusion_layer=pretrained_fusion_layer,
             embedding_length=embedding_length,
         )
@@ -199,3 +199,4 @@ class InferenceModel(nn.Module):
         )
 
         return similar_products
+
