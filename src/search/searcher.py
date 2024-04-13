@@ -3,7 +3,8 @@ import typing
 import torch
 import logging
 from torch import nn
-from src.training.search import search_dataset
+from src.search import search_dataset
+from src.search import preprocessing
 import pathlib
 import numpy
 import pandas
@@ -118,7 +119,7 @@ class RecommenderSearchPipeline(nn.Module):
         search_dataset_path: typing.Union[str, pathlib.Path],
         label_search_dataset_path: typing.Union[str, pathlib.Path],
         metadata_decode_format: typing.Literal['utf-8', 'utf-16'],
-        init_transform: faiss.VectorTransform = None, 
+        init_transform: preprocessing.PreprocessingPipeline = None, 
         refiner: faiss.IndexRefine = None,
         filtering: MetadataPostFiltering = None,
     ):
@@ -137,10 +138,14 @@ class RecommenderSearchPipeline(nn.Module):
         self.search_index = search_index
         self.refiner = refiner
     
-    def forward(self, input_embedding: torch.Tensor) -> typing.List[typing.Dict]:
+    def forward(self, input_embeddings: torch.Tensor) -> typing.List[typing.Dict]:
 
         # apply preprocessing transformation
-        processed_embs = self.index_transform(input_embedding)
+        processed_embs = input_embeddings
+        
+        if self.init_transform is not None:
+            processed_embs = self.index_transform(input_embeddings)
+
         # make seach query using similarity index
         searched_query = self.search_index(processed_embs)
 
