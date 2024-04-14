@@ -1,6 +1,7 @@
 import dataclasses
 from src.multimodal.image_encoder import ImageEncoder
-from src.multimodal.text_encoder import TextEncoder
+from src.multimodal.title_encoder import TitleEncoder
+from src.multimodal.desc_encoder import DescriptionEncoder
 from src.training.trainers import base
 from torch.utils.data import dataset
 from src.training.callbacks import (
@@ -305,6 +306,7 @@ class ContrastiveTrainer(base.BaseTrainer):
                 save_every=save_every, 
                 log_dir=snapshot_log_dir
             ),
+            
             early_stopping.EarlyStoppingCallback(
                 min_diff=min_diff,
                 patience=patience,
@@ -376,16 +378,22 @@ class ContrastiveTrainer(base.BaseTrainer):
 
     def train(self, train_dataset: dataset.Dataset):
 
+        self.on_init_start()
+
         global_step = 0
         overall_loss = float('inf')
 
-        self.network.train()
+        # turning multimodal encoders to
+        # training mode.
+        for net in self.networks:
+            net.train()
+
         loader = self.configure_loader(train_dataset)
         self.on_init_end()
 
         for epoch in range(self.max_epochs):
 
-            for images, texts, labels in tqdm(
+            for images, titles, descriptions, labels in tqdm(
                     loader, 
                     desc='epoch: %s; curr_loss: %s;' % (
             epoch, overall_loss)):
@@ -395,52 +403,96 @@ class ContrastiveTrainer(base.BaseTrainer):
 
                 image_hard_pairs = self.contrastive_sampler.hard_mining(
                     batch_data=images, 
-                    batch_labels=labels
+                    batch_labels=labels,
+                    data_type='image'
                 )
 
-                text_hard_pairs = self.contrastive_sampler.hard_mining(
-                    batch_data=texts,
-                    batch_labels=labels
+                title_hard_pairs = self.contrastive_sampler.hard_mining(
+                    batch_data=titles,
+                    batch_labels=labels,
+                    data_type='text'
+                )
+
+                description_hard_pairs = self.contrastive_sampler.hard_mining(
+                    batch_data=descriptions,
+                    batch_labels=labels,
+                    data_type='text'
                 )
 
                 # merge hard pairs from multiple modalities together
-                zipped_pairs = zip(image_hard_pairs, text_hard_pairs)
+                zipped_pairs = zip(
+                    image_hard_pairs, 
+                    text_hard_pairs, 
+                    descriptions_hard_pairs
+                )
         
                 # each pair follow format: (image, text), for both positive, main and negative.
 
-                for (pos_img_sample, img_sample, neg_img_sample), (pos_text_sample, text_sample, neg_text_sample) in zipped_pairs:
+                for (
+                    pos_img_sample, 
+                    img_sample, 
+                    neg_img_sample
+                    ), (
+                        pos_title_sample, 
+                        title_sample, 
+                        neg_title_sample
+                        ), (
+                            pos_des_sample, 
+                            desc_sample, 
+                            neg_desc_sample) in zipped_pairs:
                     
                     self.on_train_batch_start()
         
-                    pos_pair_v_emb, pos_pair_t_emb = self.predict_embs([pos_img_sample, pos_text_sample])
+                    pos_v_emb, pos_t_emb, pos_d_emb = self.predict_embs([
+                        pos_img_sample, 
+                        pos_title_sample, 
+                        pos_desc_sample
+                    ])
 
-                    pair_v_emb, pair_t_emb  = self.predict_embs([img_sample, text_sample])
+                    pair_v_emb, pair_t_emb, pair_d_emb = self.predict_embs([
+                        img_sample, 
+                        title_sample, 
+                        desc_sample
+                    ])
 
-                    neg_pair_v_emb, neg_pair_t_emb = self.predict_embs([neg_img_sample, neg_text_sample])
+                    neg_v_emb, neg_t_emb, neg_d_emb = self.predict_embs(
+                        [neg_img_sample, 
+                        neg_title_sample, 
+                        neg_desc_sample]
+                    )
+        
+                    img_loss = self.pair_loss_function(pos_v_emb, pair_v_emb, neg_v_emb)
+                    desc_loss = self.pair_loss_function(pos_d_emb, pair_d_emb, neg_d_emb)
+                    title_loss = self.pair_loss_function(pos_t_emb, pair_t_emb, neg_t_emb)
                     
-                    img_loss = self.pair_loss_function(pos_pair_v_emb, pair_v_emb, neg_pair_v_emb)
-                    text_loss = self.pair_loss_function(pos_pair_t_emb, pair_t_emb, neg_pair_t_emb)
-                    modal_sim_loss = self.modal_loss_function(pair_v_emb, pair_t_emb)
+                    modal_sim_loss = (
+                        self.modal_loss_function(pair_v_emb, pair_t_emb) + 
+                        self.modal_loss_function(pair_v_emb, pair_d_emb)
+                    )
                     
                     # overall loss function: summary of image similarity pairs, text similarity pairs
                     # and similarity between modalities
 
-                    img_encoder_loss = img_loss.item() + modal_sim_loss.item()
-                    text_encoder_loss = text_loss.item() + modal_sim_loss.item()
+                    img_encoder_loss = img_loss + modal_sim_loss
+                    title_encoder_loss = title_loss + modal_sim_loss
+                    desc_encoder_loss = desc_loss + modal_sim_loss
                     
                     # in case we are using single gpu, we traverse
                     # over all computed loss (for each modality) and after each update
                     # clear gradients
 
                     for idx in range(len(self.optimizers)):
-
+                        
                         if isinstance(self.networks[idx], ImageEncoder):
                             img_encoder_loss.backward()
-                            self.optimizers[idx].step()
 
-                        elif isinstance(self.networks[idx], TextEncoder):
+                        elif isinstance(self.networks[idx], TitleEncoder):
                             text_encoder_loss.backward()
-                            self.optimizers[idx].step()
+                        
+                        elif isinstance(self.networks[idx], DescriptionEncoder):
+                            desc_encoder_loss.backward()
+                    
+                        self.optimizers[idx].step()
 
                         if len(self.lr_schedulers) >= (idx+1):
                             self.lr_schedulers[idx].step()
@@ -448,7 +500,7 @@ class ContrastiveTrainer(base.BaseTrainer):
                         # # emptying the gradients, so they does not overlap
                         # # with next ones, when training multiple networks
                         # # on the same device.
-                        # self.optimizers[idx].zero_grad()
+                        self.optimizers[idx].zero_grad()
 
                     self.on_train_batch_end()
 

@@ -48,45 +48,6 @@ class BaseSampler(ABC):
             in other classes.
         """
 
-class InstanceDiscriminationContrastSampler(BaseSampler):
-    
-    def __init__(self, 
-        image_transformations,
-        text_transformations,
-        audio_transformations,
-        **kwargs
-    ):
-        super(InstanceDiscriminationContrastSampler, self).__init__(**kwargs)
-        self.image_transformations = image_transformations
-        self.text_transformations = text_transformations 
-        self.audio_transformations = audio_transformations
-        
-    def hard_mining(self, batch_data: typing.List, batch_labels: typing.List):
- 
-        output_samples = []
-
-        for idx, sample in enumerate(batch_data):
-
-            pos_sample = (
-                self.image_transformations(sample[0]) if self.video_transformations else sample[0],
-                self.text_transformations(sample[1]) if self.text_transformations else sample[1]
-            )
-
-            neg_sample = sorted([
-                pair for pair in range(len(batch_labels))
-                if pair != idx and batch_labels[idx] != batch_labels[pair]],
-                key=lambda sample_idx: self.pair_similarity_metric(sample, batch_data[sample_idx])
-            )[0]
-
-            output_samples.append(
-                (
-                    pos_sample,
-                    sample,
-                    neg_sample
-                )
-            )
-        return output_samples
-
 class SupervisedContrastSampler(BaseSampler):
     """
     Implementation of batch sampler,
@@ -103,11 +64,16 @@ class SupervisedContrastSampler(BaseSampler):
     ):
         if data_type == 'image':
             ssim = similarity.SSIM().compute(img1=pair1, img2=pair2)
+
         elif data_type == 'text':
             ssim = similarity.calculate_text_similarity(pair1, pair2)
         return ssim
         
-    def hard_mining(self, batch_data: typing.List, batch_labels: typing.List):
+    def hard_mining(self, 
+        batch_data: typing.List, 
+        batch_labels: typing.List, 
+        data_type: typing.Literal['image', 'text']
+    ):
         """
         Finds hard mining samples to enhance training
         of the classifier.
@@ -125,14 +91,22 @@ class SupervisedContrastSampler(BaseSampler):
                 pair for pair in range(len(batch_data)) 
                 if pair != idx and batch_labels[idx] == batch_labels[pair]
             ],
-                key=lambda sample_idx: self.pair_similarity_metric(sample, batch_data[sample_idx])
+                key=lambda sample_idx: self.pair_similarity_metric(
+                    sample, 
+                    batch_data[sample_idx], 
+                    data_type
+                )
             )[0]
 
             neg_sample = sorted([
                 pair for pair in range(len(batch_data)) 
                 if pair != idx and batch_labels[idx] != batch_labels[pair]
             ],
-                key=lambda sample_idx: self.pair_similarity_metric(sample, batch_data[sample_idx])
+                key=lambda sample_idx: self.pair_similarity_metric(
+                    sample, 
+                    batch_data[sample_idx], 
+                    data_type
+                )
             )[0]
 
             output_samples.append(
@@ -142,5 +116,9 @@ class SupervisedContrastSampler(BaseSampler):
                     neg_sample
                 )
             )
+            
         return output_samples
+
+
+
 
