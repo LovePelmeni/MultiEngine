@@ -4,6 +4,40 @@ from sklearn.metrics import (
     adjusted_rand_score,
 )
 
+class F1Score(nn.Module):
+    """
+    Implementation of the multiclass
+    F1-Score for evaluating multiclass
+    classification tasks.
+    """
+    def __init__(self, num_classes: int, eps: float = 1e-7):
+        super(F1Score, self).__init__()
+        self.num_classes: int = num_classes
+        self.eps: float = eps
+
+    def forward(self, preds: torch.Tensor, trues: torch.Tensor):
+        
+        confusion_matrix = torch.zeros((self.num_classes, self.num_classes))
+        
+        # filling up confusion matrix
+        for sample in range(len(preds)):
+            confusion_matrix[trues[sample], preds[sample]] += 1
+            
+        scores = []
+        
+        for cls_ in range(self.num_classes):
+            true_positives = confusion_matrix[cls_, cls_] 
+    
+            false_positives = sum(confusion_matrix[:, cls_]) - true_positives
+            false_negatives = sum(confusion_matrix[cls_, :]) - true_positives
+     
+            precision = true_positives / (true_positives + false_negatives + self.eps)
+            recall = true_positives / (true_positives + false_positives + self.eps)
+            
+            f1_score = 2 * precision * recall / (precision + recall + self.eps)
+            scores.append(f1_score)
+        return numpy.mean(scores)
+
 class AdjustedMutualInformationScore(nn.Module):
     """
     Implementation of the Adjusted Mutual Information
