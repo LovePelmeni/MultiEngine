@@ -129,3 +129,24 @@ class AveragePrecisionAtK(nn.Module):
             scores.append(sim_score)
         return sum(scores) / len(pred_queries)
             
+
+class MiddleDistanceScore(nn.Module):
+    """
+    Computes variance of the cluster
+    and uses it as a measure of sparsity.
+    Is used for evaluating fusion layer.
+    """
+    def __init__(self, factor: float):
+        super(MiddleDistanceScore, self).__init__()
+        self.factor = factor
+
+    def compute_centroid(self, vectors: list):
+        return [
+            sum([vec[coord] for coord in vectors]) / len(vectors[0])
+            for coord in range(len(vectors))
+        ]
+
+    def forward(self, cluster_embeddings: list):
+        centroid = self.compute_centroid()
+        distances = [self.l2_norm(centroid, vec) for vec in cluster_embeddings]
+        return sum(distances) / len(distances)

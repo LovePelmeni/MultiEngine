@@ -59,7 +59,6 @@ class TripletLoss(TripletMarginLoss):
             smooth_loss=smooth_loss,
             triplets_ber_anchor=triplets_per_anchor
         )
-        
 
 class MultilabelFocalLoss(FocalLoss):
     """
