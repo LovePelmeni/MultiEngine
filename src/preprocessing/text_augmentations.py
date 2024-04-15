@@ -27,3 +27,4 @@ def get_val_text_augmentations() -> naw.Pipeline:
             naw.RandomWordAug(aug=0.3),
         ]
     )
+    
