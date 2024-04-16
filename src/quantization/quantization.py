@@ -10,6 +10,7 @@ quan_logger = logging.getLogger(__name__)
 handler = logging.FileHandler(filename='quantization_logs.log')
 quan_logger.addHandler(handler)
 
+
 class DynamicInferenceQuantizer(BaseQuantizer):
     """
     Module for dynamically quantizing parameters
@@ -41,6 +42,12 @@ class StaticNetworkQuantizer(object):
         calibration_batch_size - batch size for calibration
         calibration_dataset - dataset to use for calibration
         inference_device - inference device to use for static quantization.
+
+        NOTE:
+            you won't be able to move quantized network
+            from 'inference_device' to another device, without
+            repeatedly retraining it. Be sure what device to use for 
+            these purposes.
     """
     def __init__(self, 
         activation_observer_name: str,
@@ -60,6 +67,9 @@ class StaticNetworkQuantizer(object):
         self.calibration_batch_size: int = calibration_batch_size
         self.activation_observer_name = activation_observer_name
         self.weight_observer_name = weight_observer_name
+
+        if inference_device == "cuda":
+            torch.backends.quantized.engine = "cudnn"
 
     def quantize(self, 
         input_model: nn.Module
@@ -163,8 +173,14 @@ class NetworkCalibrator(object):
 
             # Specify the quantization configuration
             qconfig = torch.ao.quantization.QConfig(
-                activation=activation_observer.with_args(dtype=activation_q_type),
-                weight=weight_observer.with_args(dtype=weight_q_type)
+                activation=activation_observer.with_args(
+                    dtype=activation_q_type,
+                    qscheme=torch.per_tensor_affine
+                ),
+                weight=weight_observer.with_args(
+                    dtype=weight_q_type,
+                    qscheme=torch.per_tensor_symmetric
+                )
             )
             # Apply the quantization configuration to the model
             network.qconfig = qconfig
