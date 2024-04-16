@@ -55,10 +55,11 @@ class ChannelInputQuantizer(base.BaseQuantizer):
         return scales, zero_points
     
     def quantize(self, input_img: torch.Tensor):
+        scales, zero_points = self.compute_quantization_logistics(input_img)
         return torch.quantize_per_channel(
             input=input_img,
-            zero_points=self.zero_points,
-            scales=self.scales,
+            zero_points=zero_points,
+            scales=scales,
             dtype=self.quan_type
         )
 

@@ -31,32 +31,53 @@ class StaticNetworkQuantizer(object):
     """
     Base module for performing static quantization
     of the network.
+
+    Parameters:
+    -----------
+        activation_observer_name - name of the activation quantization observer
+        weight_observer_name - name of the weight quantization observer
+        q_activation_type - dtype for activation observer
+        q_weight_type - dtype for weight observer
+        calibration_batch_size - batch size for calibration
+        calibration_dataset - dataset to use for calibration
+        inference_device - inference device to use for static quantization.
     """
-    def __init__(self, q_activation_type, q_weight_type):
+    def __init__(self, 
+        activation_observer_name: str,
+        weight_observer_name: str,
+        q_activation_type, 
+        q_weight_type,
+        calibration_batch_size: int,
+        calibration_dataset: data.Dataset,
+        inference_device: torch.DeviceObjType
+    ):
         self.q_weight_type = q_weight_type 
         self.q_activation_type = q_activation_type 
         self.q_activation_type = q_activation_type
         self.q_weight_type = q_weight_type
-        self.calibrator = NetworkCalibrator()
+        self.calibrator = NetworkCalibrator(inference_device=inference_device)
+        self.calibration_dataset = calibration_dataset
+        self.calibration_batch_size: int = calibration_batch_size
+        self.activation_observer_name = activation_observer_name
+        self.weight_observer_name = weight_observer_name
 
     def quantize(self, 
-        input_model: nn.Module, 
-        calibration_dataset: data.Dataset, 
-        calib_batch_size: int
+        input_model: nn.Module
     ):
         try:
             calibration_loader = self.calibrator.configure_calibration_loader(
-                calibration_dataset=calibration_dataset,
-                calibration_batch_size=calib_batch_size,
+                calibration_dataset=self.calibration_dataset,
+                calibration_batch_size=self.calibration_batch_size,
                 loader_workers=2
             )
             # perform calibration
             stat_network = self.calibrator.calibrate(
                 input_model,
                 loader=calibration_loader,
-                q_type=self.quan_type,
+                activation_q_type=self.q_activation_type,
                 weight_q_type=self.q_weight_type,
-                activation_q_type=self.q_activation_type
+                weight_observer_name=self.weight_observer_name,
+                activation_observer_name=self.activation_observer_name
             )
 
             if stat_network is None:
@@ -67,16 +88,17 @@ class StaticNetworkQuantizer(object):
 
         except(Exception) as err:
             quan_logger.error(err)
-            return None
+            raise err
 
 class NetworkCalibrator(object):
-
     """
     Base module for performing
     calibration for static post-training
     quantization.
     """
-
+    def __init__(self, inference_device: torch.DeviceObjType):
+        self.inf_device = inference_device
+        
     def configure_calibration_loader(self, 
         calibration_dataset: data.Dataset,
         calibration_batch_size: int,
@@ -94,7 +116,7 @@ class NetworkCalibrator(object):
         )
 
     @staticmethod
-    def configure_observer(self, observer_name: str):
+    def configure_observer(observer_name: str):
         """
         Configures observer method for defining
         quantization range.
@@ -141,8 +163,8 @@ class NetworkCalibrator(object):
 
             # Specify the quantization configuration
             qconfig = torch.ao.quantization.QConfig(
-                activation=weight_observer.with_args(dtype=activation_q_type),
-                weight=activation_observer.with_args(dtype=weight_q_type)
+                activation=activation_observer.with_args(dtype=activation_q_type),
+                weight=weight_observer.with_args(dtype=weight_q_type)
             )
             # Apply the quantization configuration to the model
             network.qconfig = qconfig
@@ -150,10 +172,11 @@ class NetworkCalibrator(object):
 
             # performing calibration 
             for images, _ in loader:
-                stat_network.forward(images).cpu()
+                dev_images = images.to(self.inf_device)
+                stat_network.to(self.inf_device).forward(dev_images).cpu()
 
             return stat_network
 
         except(Exception) as err:
-            quan_logger.debug(err)
-            return None
+            quan_logger.error(err)
+            raise RuntimeError("failed to calibrate network, check logs.")
