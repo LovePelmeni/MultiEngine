@@ -11,10 +11,22 @@ class ContrastiveDataset(base.BaseDataset, Dataset):
 
     Parameters:
     -----------
-        input_paths - list of paths of cropped out human faces
-        labels - list of corresponding emotion labels
-        transformations (optional) - additional set of image transformations
-        to apply to images during training.
+        image_paths: list of input image paths
+        title_paths: list of input title paths
+        description_paths: list of input description paths
+        labels - list of corresponding data labels
+        dataset_type - type of the input dataset
+
+        description_tokenizer - tokenizer for encoding input description sequences into embeddings,
+        valid for processing by the NLP model.
+
+        title_tokenizer - tokenizer for encoding input title sentences into embeddings,
+        valid for processing by the NLP model.
+
+        # augmentations
+        image_transformations - input image data augmentations.
+        title_transformations - input title sentence augmentations.
+        description_transformations - input description sentence augmentations.
     """
     def __init__(self, 
         image_paths: typing.List[str], 
@@ -23,8 +35,8 @@ class ContrastiveDataset(base.BaseDataset, Dataset):
         labels: typing.List,
         dataset_type: typing.Literal['train', 'valid'],
         image_transformations=None,
-        title_transformations=None,
-        description_transformations=None
+        title_transformations: typing.List = None,
+        description_transformations: typing.List = None
     ):
         super(ContrastiveDataset, self).__init__()
         self.image_paths = image_paths
@@ -44,14 +56,14 @@ class ContrastiveDataset(base.BaseDataset, Dataset):
         
         label = self._input_labels[idx]
 
-        if self.video_transformations is not None:
+        if self.image_transformations is not None:
             image = self.image_transformations(image=image)['image']
 
-        if self.text_transformations is not None:
-            title = self.title_transformations(title)
+        if self.title_transformations is not None:
+            title = aug(title)
 
-        if self.audio_transformations is not None:
-            description = self.description_transformations(description)
+        if self.description_transformations is not None:
+            description = aug(description)
 
         return image, description, title, label
 
