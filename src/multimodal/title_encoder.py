@@ -11,19 +11,16 @@ class TextEncoder(nn.Module):
     def __init__(self, 
         bert_model: bert.BertModel, 
         embedding_length: int,
-        bert_tokenizer: bert.BertTokenizer,
         dropout_prob: float = 0.1
     ):
         super(TextEncoder, self).__init__()
         self.feature_extractor = bert_model
-        self.tokenizer = bert_tokenizer
         self.out_bert_dim = self.feature_extractor.config.hidden_size
         self.proj_head = projection.ProjectionLayer(
             in_dim=self.out_bert_dim, 
             out_dim=embedding_length,
             dropout_prob=dropout_prob
         )
-        self.tokenizer.eval()
         self.feature_extractor.eval()
         self.proj_head.eval()
 
@@ -47,13 +44,12 @@ class TextEncoder(nn.Module):
             self.feature_extractor.bert.encoder.layer[layer].trainable = True
 
     def forward(self, 
-        input_sentences: typing.List[str], 
+        tokenized_input: torch.Tensor, 
         attention_mask=None, 
         token_type_ids=None, 
         position_ids=None, 
         head_mask=None
     ):
-        tokenized_input = self.tokenizer(text=input_sentences)
         predicted_vector = self.feature_extractor(
             tokenized_input,
             attention_mask=attention_mask,
@@ -63,7 +59,4 @@ class TextEncoder(nn.Module):
         )
         proj_emb = self.proj_head(predicted_vector)
         return proj_emb
-
-
-
 

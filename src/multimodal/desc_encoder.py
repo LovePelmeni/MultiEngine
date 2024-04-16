@@ -12,13 +12,12 @@ class DescriptionEncoder(nn.Module):
         pretrained_encoder - pretrained text attention based encoder
         embedding_length - length of the output embedding
     """
-    def __init__(self, 
-        pretrained_tokenizer: nn.Module, 
+    def __init__(self,
         pretrained_encoder: nn.Module, 
         embedding_length: int
     ):
+        super(DescriptionEncoder, self).__init__()
         self.encoder = pretrained_encoder
-        self.tokenizer = pretrained_tokenizer
         self.proj_head = projection.ProjectionLayer(
             in_dim=self.encoder.config.hidden_size,
             out_dim=embeddding_length
@@ -48,13 +47,12 @@ class DescriptionEncoder(nn.Module):
             self.feature_extractor.bert.encoder.layer[layer].trainable = True
 
     def forward(self, 
-        input_description: str, 
+        tokenized_input: torch.Tensor,
         attention_mask=None, 
         token_type_ids=None, 
         position_ids=None, 
         head_mask=None
     ):
-        token_input = self.tokenizer(input_description)
-        token_embedings = self.encoder(token_input)
+        token_embedings = self.encoder(tokenized_input)
         embeddings = self.proj_head(token_embeddings)
         return embeddings
