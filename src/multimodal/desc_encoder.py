@@ -24,7 +24,6 @@ class DescriptionEncoder(nn.Module):
             dropout_prob=dropout_prob,
         )
         self.encoder.eval()
-        self.tokenizer.eval()
         self.proj_head.eval()
 
     def freeze_first_k_layers(self, k: int):
@@ -56,3 +55,5 @@ class DescriptionEncoder(nn.Module):
         token_embedings = self.encoder(tokenized_input)
         embeddings = self.proj_head(token_embeddings)
         return embeddings
+
+
