@@ -53,7 +53,9 @@ class InferenceModel(nn.Module):
 
         # loading text modality preprocessing augmentations
         try:
-            pass
+            title_tokenizer = torch.load(title_tokenizer_path)
+            description_tokenizer = torch.load(description_tokenizer_path)
+    
         except(KeyError):
             raise RuntimeError("some crucial text preprocessing config parameters are missing")
 
@@ -96,6 +98,8 @@ class InferenceModel(nn.Module):
         title_encoder_path: typing.Union[str, pathlib.Path],
         desc_encoder_path: typing.Union[str, pathlib.Path],
         fusion_layer_path: typing.Union[str, pathlib.Path],
+        title_tokenizer_path: typing.Union[str, pathlib.Path],
+        description_tokenizer_path: typing.Union[str, pathlib.Path],
         embedding_length: int
     ):
         """
@@ -165,6 +169,30 @@ class InferenceModel(nn.Module):
             prep_image).permute(2, 0, 1).unsqueeze(0)
             preped_images.append(prep_image)
         return preped_images
+
+    def prep_title_data(self, input_title: str):
+        """
+        Prepares (tokenizes) input title string text
+        to a word embedding form.
+
+        Parameters:
+        -----------
+            input_title - title string
+        """
+        tokenized_title = self.title_tokenizer(input_title)
+        return tokenized_title
+
+    def prep_desc_data(self, input_desc: str):
+        """
+        Prepares (tokenizes) input description string text
+        to a word embedding form.
+
+        Parameters:
+        -----------
+            input_desc - description string
+        """
+        tokenized_description = self.description_tokenizer(input_desc)
+        return tokenized_description
             
     def prep_text_data(self, input_texts: typing.List[str]):
         """
@@ -183,14 +211,17 @@ class InferenceModel(nn.Module):
 
     def forward(self, 
         input_image: torch.Tensor, 
-        input_description: torch.Tensor
+        input_description: str,
+        input_title: str,
     ):
         preped_image = self.prep_image_data(input_images=[input_image])
-        preped_text = self.prep_text_data(input_texts=[input_description])
+        preped_title = self.prep_title_data(input_title=input_title)
+        preped_description = self.prep_desc_data(input_desc=input_description)
 
         output_emb: torch.Tensor = self.encoder_net.forward(
             input_image=preped_image,
-            input_text=preped_text
+            input_title=preped_title,
+            input_desc=preped_description
         )
 
         similar_products: typing.List[typing.Dict] = (
@@ -199,4 +230,5 @@ class InferenceModel(nn.Module):
         )
 
         return similar_products
+
 
