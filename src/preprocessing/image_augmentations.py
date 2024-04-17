@@ -6,8 +6,15 @@ import cv2
 import albumentations
 import numpy
 
-DEFAULT_MEAN = (0.43216, 0.394666, 0.37645)
-DEFAULT_STD = (0.22803, 0.22145, 0.216989)
+"""
+NOTE:   
+    mean and std, selected for normalization
+    may vary, depending on image modality encoder you use.
+    you may need to override DEFAULT_MEAN and DEFAULT_STD
+    environment variables to specify which parameters to use.
+"""
+DEFAULT_MEAN = os.environ.get("DEFAULT_NORM_MEAN", (0.43216, 0.394666, 0.37645))
+DEFAULT_STD = os.environ.get("DEFAULT_NORM_STD", (0.22803, 0.22145, 0.216989))
 
 class HSVClahe(albumentations.ImageOnlyTransform):
     """
@@ -64,10 +71,7 @@ class ImageIsotropicResize(albumentations.ImageOnlyTransform):
         resized_img = cv2.resize(input_img, (new_height, new_width), interpolation=inter)
         return input_img
 
-def get_train_image_augmentations(
-    img_height: str, img_width: str, 
-    norm_mean: tuple, norm_std: tuple
-):
+def get_train_image_augmentations(img_height: str, img_width: str):
     return albumentations.Compose(
         transforms=[
             albumentations.OneOf(
@@ -119,10 +123,9 @@ def get_train_image_augmentations(
         ]
     )
 
-def get_val_image_augmentations(
-    img_height: int, img_width: int,
-    norm_mean: tuple, norm_std: tuple,
-):
+
+
+def get_val_image_augmentations(img_height: int, img_width: int):
     """
     Set of augmentations for evaluating
     image generation embedding network.
