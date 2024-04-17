@@ -115,22 +115,5 @@ def calculate_text_similarity(sentence1, sentence2):
     similarity = numpy.dot(vector1, vector2) / (numpy.linalg.norm(vector1) * numpy.linalg.norm(vector2))
     return similarity 
 
-def calculate_audio_similarity(signal1, signal2, sr1, sr2):
-    """
-    Calculates similarity between 2 audio files
-    using cosine similarity of MFC Coefficients
-    """
-    # Extract MFCCs
-    mfcc1 = librosa.feature.mfcc(signal1, sr1)
-    mfcc2 = librosa.feature.mfcc(signal2, sr2)
 
-    # Compute the mean MFCC for each audio file
-    mean_mfcc1 = numpy.mean(mfcc1, axis=1)
-    mean_mfcc2 = numpy.mean(mfcc2, axis=1)
 
-    # Reshape to 2D arrays for cosine similarity
-    mean_mfcc1 = mean_mfcc1.reshape(1, -1)
-    mean_mfcc2 = mean_mfcc2.reshape(1, -1)
-    cos_sim = numpy.dot(mean_mfcc1, mean_mfcc2) / (
-    numpy.linalg.norm(mean_mfcc1) * numpy.linalg.norm(mean_mfcc2))
-    return cos_sim

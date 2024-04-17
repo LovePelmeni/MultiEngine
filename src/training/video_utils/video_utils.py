@@ -30,8 +30,10 @@ def get_video_numpy_array(video_url: typing.Union[str, pathlib.Path]) -> numpy.n
                 print("failed to extract frame at index: %s" % curr_idx)
             curr_idx = curr_idx + 1
         return output_frames
+
     except(Exception) as err:
         logger.error(err)
+        return numpy.asarray([])
         
 def convert_video_rgb(videos: typing.List[numpy.ndarray]) -> numpy.ndarray:
     """
