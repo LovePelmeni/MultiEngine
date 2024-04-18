@@ -15,7 +15,7 @@ when embarked on design of fusion strategy.
 
 # Solution: 
 One of the prevalent and publicly approved
-approahes, that conform our expectations is called ("Stacked Latent Attention-based Fusion")[" https://openaccess.thecvf.com/content_cvpr_2018/papers/Fan_Stacked_Latent_Attention_CVPR_2018_paper.pdf"]. It assigns
+approahes, that conform our expectations is called (Stacked Latent Attention-based Fusion)[" https://openaccess.thecvf.com/content_cvpr_2018/papers/Fan_Stacked_Latent_Attention_CVPR_2018_paper.pdf"]. It assigns
 weights for each modality, which enforces them to contribute to the final output
 in different proportions, so the network can distinguish between different modalities better. Moreover, authors proposed a new way of factoring multiple modalities in the way, that improves spatial reasoning as described in the paper itself.
 
