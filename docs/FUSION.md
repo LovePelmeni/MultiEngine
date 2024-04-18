@@ -6,7 +6,7 @@ modalities with the aim to improve and uplift current model capabilities by cons
 data, which came from manifold independent sources. 
 
 Here I want to list critical requirements we kept in mind
-when embarked on design of fusion strategy.
+when embarked on selection of fusion strategy.
 
 1. Accuracy blow up (fusion provides slight or significant blow up in accuracy, which is essential).
 2. Robust to missing modalities (in case some articles may lack images, we still need to handle request with grace.)
