@@ -1,4 +1,4 @@
-# Fusion strategies in MultiEngine
+# Multimodal data fusion in MultiEngine
 
 Fusion is undoubtedly the most critical component, requiring thorough
 and well elaborated design. It should accurately reflect data and combine 
@@ -20,7 +20,7 @@ weights for each modality, which enforces them to contribute to the final output
 in different proportions, so the network can distinguish between different modalities better. Moreover, authors proposed a new way of factoring multiple modalities in the way, that improves spatial reasoning as described in the paper itself.
 
 <p align="center">
-  <a><img src="https://github.com/LovePelmeni/DeepfakeStream/blob/main/docs/imgs/fusion_layer.png" style="width: 90%; height: 90%"></a>
+  <a><img src="https://github.com/LovePelmeni/MultiEngine/blob/main/docs/imgs/fusion_layer.png" style="width: 90%; height: 90%"></a>
 </p>
 
 # Implementation
