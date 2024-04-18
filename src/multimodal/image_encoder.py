@@ -148,19 +148,28 @@ class ImageEncoder(nn.Module):
         )
         self.model.eval()
 
-    def freeze_first_k_layers(self, k: int):
+    def freeze_first_k_layers(self, k: int) -> None:
         """
-        Main application string remote names.
+        Freezes first K layers of the encoder
+        network.
+
         Parameters:
         -----------
             k: int - number first k layers to freeze.
         """
+        curr_layer = 0
+        for layer_name, param in self.model.named_parameters():
+            if curr_layer <= k:
+                param.requires_grad = False
+            curr_layer += 1
     
-    def unfreeze(self):
+    def unfreeze(self) -> None:
         """
         Unfreezes all freezed layers
         and enables gradient computation.
         """
+        for layer_name, layer_param in self.model.named_parameters():
+            layer_param.requires_grad = True
     
     def forward(self, input_imgs: torch.Tensor):
         return self.model(input_imgs)
