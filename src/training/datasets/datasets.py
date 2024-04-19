@@ -188,7 +188,7 @@ class FusionDataset(data.Dataset):
         return len(self.image_embedding)
 
 
-class QuantizationImageDataset(data.Dataset):
+class QuantizationImageDataset(base.BaseDataset, Dataset):
     """
     Dataset for storing image data
     for quantizing image modality encoder.
@@ -201,10 +201,11 @@ class QuantizationImageDataset(data.Dataset):
     error is going to be presented, due to diversity in augmentations.
     """
     def __init__(self, 
-        image_paths: typing.List[str], 
+        image_paths: typing.List[typing.Union[str, pathlib.Path]], 
         labels: typing.List[typing.Any],
-        image_transformations = None
+        image_transformations
     ):
+        super(QuantizationImageDataset, self).__init__()
         self.image_paths = image_paths
         self.labels = labels
         self.image_transformations = image_transformations
@@ -215,25 +216,26 @@ class QuantizationImageDataset(data.Dataset):
     def __getitem__(self, idx: int):
         image = cv2.imread(self.image_paths[idx], cv2.IMREAD_UNCHANGED)
         label = self.labels[idx]
-        if self.image_transformations is not None:
-            image = self.image_transformations(image=image)['image']
-        image = torch.from_numpy(image).float()
-        return image, label
+        augmented_image = self.image_transformations(image=image)['image']
+        augmented_image = torch.from_numpy(image).float()
+        return augmented_image, label
 
-class QuantizationDescriptionDataset(data.Dataset):
+class QuantizationDescriptionDataset(base.BaseDataset, Dataset):
     """
     Dataset for storing description document text data,
     used for quantizing description modality encoder.
     """
     def __init__(self, 
-        description_paths: typing.List[str], 
-        labels: typing.List[int], 
+        description_paths: typing.List[typing.Union[str, pathlib.Path]], 
+        labels: typing.List[typing.Any], 
+        description_transformations,
         access_file_mode: typing.Literal['r', 'rb'] = 'r',
-        description_transformations
     ):
+        super(QuantizationDescriptionDataset, self).__init__()
         self.description_doc_paths: list = description_paths
         self.labels = labels
         self.description_transformations = description_transformations
+        self.access_file_mode: str = access_file_mode
 
     def __len__(self):
         return len(self.description_paths)
@@ -264,7 +266,7 @@ class QuantizationDescriptionDataset(data.Dataset):
         except(FileNotFoundError) as err:
             raise RuntimeError("invalid document paths passed. Document: %s cannot be accessed")
 
-class QuantizationTitleDataset(data.Dataset):
+class QuantizationTitleDataset(base.BaseDataset, Dataset):
     """
     Dataset stores title .txt documents, that 
     are used for quantizing title modality encoder.
@@ -272,11 +274,14 @@ class QuantizationTitleDataset(data.Dataset):
     def __init__(self, 
         title_doc_paths: typing.List[typing.Union[str, pathlib.Path]], 
         labels: typing.List[typing.Any],
-        title_transformations
+        title_transformations,
+        access_file_mode: typing.Literal['r', 'rb'] = 'r'
     ):
+        super(QuantizationTitleDataset, self).__init__()
         self.title_doc_paths: list = title_doc_paths
         self.labels: list = labels
         self.title_transformations = title_transformations
+        self.access_file_mode = access_file_mode
 
     def __len__(self):
         return len(self.description_paths)
