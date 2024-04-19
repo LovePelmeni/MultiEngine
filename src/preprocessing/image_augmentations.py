@@ -16,28 +16,6 @@ NOTE:
 DEFAULT_MEAN = os.environ.get("DEFAULT_NORM_MEAN", (0.43216, 0.394666, 0.37645))
 DEFAULT_STD = os.environ.get("DEFAULT_NORM_STD", (0.22803, 0.22145, 0.216989))
 
-class HSVClahe(albumentations.ImageOnlyTransform):
-    """
-    Variation of CLAHE, which transforms image into
-    HSV color space and extracts black and white channel,
-    then applies original CLAHE algorithm.
-    """
-    def __init__(self, tile_size: int, clip_limit: float):
-        if self.tile_size % 2 == 0:
-            raise ValueError(msg='tile size should be odd')
-
-        self.tile_size = tile_size 
-        self.clip_limit = clip_limit 
-        self.clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_size)
-
-    def apply(self, input_img: numpy.ndarray):
-        hsv_img = cv2.cvtColor(input_img, cv2.COLOR_RGB2HSV)
-        h, s, v = cv2.split(hsv_img)
-        new_v = self.clahe.apply(v)
-        new_img = cv2.merge((h, s, new_v))
-        return new_img
-
-
 class ImageIsotropicResize(albumentations.ImageOnlyTransform):
     """
     Base module for resizing
@@ -122,8 +100,6 @@ def get_train_image_augmentations(img_height: str, img_width: str):
             ),
         ]
     )
-
-
 
 def get_val_image_augmentations(img_height: int, img_width: int):
     """
