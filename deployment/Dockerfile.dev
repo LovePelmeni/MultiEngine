@@ -1,0 +1,17 @@
+FROM --platform=arm64 python:latest-slim-bullseye 
+LABEL author=kirklimushin@gmail.com
+WORKDIR /project/dir/
+
+ENV PYTHONUNBUFFERED=0
+
+COPY ./ ./
+
+# upgrading internal modules
+RUN pip install --upgrade pip
+RUN pip install poetry --upgrade
+
+# installing packages and upgrading infrastructure
+RUN poetry export --without-hashes --output=dev_requirements.txt --format=requirements.txt
+RUN pip install -r requirements.txt
+
+ENTRYPOINT ["sh", "./scripts/entrypoint.sh"]
