@@ -18,8 +18,13 @@ TODO:
 
 import pandas
 import pathlib
+from transformers.models import bert
 import os
 import argparse
+from src.preprocessing import (
+    image_augmentations,
+    text_augmentations
+)
 from src.training.datasets import datasets
 from torch.utils.tensorboard.summary_writer import (
     SummaryWriter
@@ -77,6 +82,13 @@ def main():
     )
 
     emb_gen_group = parser.add_group("gen_network_group")
+    
+    emb_gen_group.add_argument(
+        name="--tokenizer-config-path",
+        required=False, dest='tokenizer_config_path',
+        help="""path to the pretrained tokenizer configuration file.
+         If not specified, default BERT tokenizer will be used"""
+    )
 
     emb_gen_group.add_argument(
         "--description-encoder-config-path", 
@@ -133,6 +145,8 @@ def main():
     # setting up directories
     log_dir = pathlib.Path(args.log_dir)
 
+    # defining output modality paths
+
     output_image_emb_dir = pathlib.Path(args.output_image_emb_dir)
     output_title_emb_dir = pathlib.Path(args.output_title_emb_dir)
     output_desc_emb_dir = pathlib.Path(args.output_desc_emb_dir)
@@ -140,6 +154,7 @@ def main():
  
     output_emb_metadata_dir = pathlib.Path(args.output_emb_metadata_path)
 
+    # dataset paths for each given modality
     input_image_dir = pathlib.Path(args.input_image_dataset_dir)
     input_title_dir = pathlib.Path(args.input_title_dataset_dir)
     input_desc_dir = pathlib.Path(args.input_desc_dataset_dir)
@@ -178,17 +193,48 @@ def main():
     title_encoder.eval()
     desc_encoder.eval()
 
+
+    # defining image preprocessing augmentations
+
+    normalization_means = os.environ.get("NORMALIZATION_MEAN").split(",")
+    normalization_stds = os.environ.get("NORMALIZATION_STD").split(",")
+
+    image_augmentations = albumentations.Compose(
+        transforms=[
+            image_augs.ImageIsotropicResize(
+                new_height=new_height,
+                new_width=new_width,
+                interpolation_up=interpolation_up,
+                interpolation_down=interpolation_down
+            ),
+            albumentations.Normalize(
+                mean=normalization_means,
+                stds=normalization_stds,
+            )
+        ]
+    )
+    # defining title and description preprocessing augmentations
+
+    tokenizer_config_path = pathlib.Path(args.tokenizer_config_path)
+    pretrained_tokenizer = bert.BertTokenizer.from_pretrained(tokenizer_config_path)
+    text_augmentations = naw.Sequential([
+        text_augs.InputWordTokenizer(
+            tokenizer=pretrained_tokenizer
+        )
+    ])
+
     # dataset for generating embeddings
     embedding_dataset = datasets.ContrastiveDataset(
         image_paths=image_paths,
         title_paths=title_paths,
         description_paths=description_paths,
         image_transformations=image_augmentations,
-        title_transformations=title_augmentations,
-        description_transformations=description_augmentations,
+        title_transformations=text_augmentations,
+        description_transformations=text_augmentations,
         labels=labels,
         dataset_type=dataset_type
     )
+
     # setting up data loader
     loader = data.DataLoader(
         dataset=embedding_dataset,
@@ -290,3 +336,4 @@ def main():
     
 if __name__ == '__main__':
     main()
+
