@@ -47,8 +47,8 @@ def compute_embedding(
     Function, that simply computes embedding vector 
     using given network and input data.
     """
-    device_data = input_data.to(inf_device)
-    output_emb = netowrk.to(inf_device).cpu()
+    device_data = input_data.to(inference_device)
+    output_emb = network.to(inference_device).cpu()
     queue.put(output_emb)
     return output_emb
 
@@ -174,7 +174,11 @@ def main():
     inference_device = torch.device('cpu')
 
     if (args.use_gpu == True):
-        inference_device = torch.device("cuda")
+        if torch.cuda.is_available:
+            inference_device = torch.device("cuda")
+            print("selected GPUs for performing inference.")
+        else:
+            print("cuda is not available on this machine, switching to builtin CPU")
     
     elif (args.use_mps == True):
         if torch.backends.mps.is_available():
