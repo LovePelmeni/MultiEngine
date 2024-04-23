@@ -7,12 +7,13 @@ logger = logging.getLogger("attention_fusion_logger")
 handler = logging.FileHandler(filename='attention_fusion_logs.log')
 logger.addHandler(handler)
 
-class AttentionFusion(nn.Module):
+class VisualDotProductAttentionFusion(nn.Module):
     """
-    Implementation of the vanilla Attention-based
-    Fusion for aligning multimodal output 
-    data.
+    Attention-based fusion, what uses attention mechanism
+    called "Visual dot product Attention".
     
+    Paper: https://paperswithcode.com/method/dot-product-attention
+
     Parameters:
     -----------
         1. channel_to_encoder_dim - list of
@@ -31,7 +32,7 @@ class AttentionFusion(nn.Module):
 
         # this linear layer corresponds to weights, that should be learned
         # during training. Each weight corresponds to a modality.
-        attn_in_dim = sum(self.channel_to_encoder_dim.values())
+        attn_in_dim = sum(self.channel_to_encoder_dim)
 
         self.attention = nn.Sequential(
             nn.Linear(
@@ -71,45 +72,48 @@ class AttentionFusion(nn.Module):
         )
         return weighted_sum_tensor
 
-
-class VisualDotProductAttentionFusion(nn.Module):
-    """
-    Attention-based fusion, what uses attention mechanism
-    called "Visual dot product Attention".
-    
-    Paper: https://paperswithcode.com/method/dot-product-attention
-
-    """
-    def __init__(self, 
-        channels_to_dim: typing.Dict[str, int], 
-        fusion_weights: nn.Module = None
-    ):
-        super(VisualDotProductAttnetionFusion, self).__init__()
-
-class CoAttentionFusion(nn.Module):
-    """
-    Attention-based fusion, that uses attention mechanism
-    called "Co-Attention".
-    
-    Paper: https://www.researchgate.net/figure/The-structure-of-co-attention-mechanism_fig3_343606404
-
-    """
-    def __init__(self, 
-        channels_to_dim: typing.Dict[str, int],
-        fusion_weights: nn.Module = None
-    ):
-        super(CoAttentionFusion, self).__init__()
-
-class StackedVisualAttentionFusion(nn.Module):
+class StackedLatentAttentionFusion(nn.Module):
     """
     Attention-based fusion, that uses attention mechanism 
-    called "Stacked Visual Attention".
+    called "Stacked Latent Attention", designed by Facebook Research.
 
-    Paper: https://www.researchgate.net/publication/343842731_Stack-VS_Stacked_Visual-Semantic_Attention_for_Image_Caption_Generation
+    Paper: https://openaccess.thecvf.com/content_cvpr_2018/papers/Fan_Stacked_Latent_Attention_CVPR_2018_paper.pdf
 
+    Parameters:
+    -----------
+        channels_to_dim: list - list of modality encoder input dimensions
+        fusion_weights (optional) - load attention layer state if presented, default None
     """
     def __init__(self, 
-        channels_to_dim: typing.Dict[str, int],
+        channels_to_dim: typing.List[int],
         fusion_weights: nn.Module = None
     ):
         super(StackedVisualAttentionFusion, self).__init__()
+        self.channels_to_dim: int = channels_to_dim
+        self.fusion_weights = fusion_weights
+        self.attention = nn.Sequential(
+            nn.Linear(
+                in_features=sum(channels_to_dim),
+                out_features=len(channels_to_dim),
+                bias=False
+            )
+        )
+        # self.attention = None
+        # self.softmax = nn.Softmax(dim=-1)
+
+        # if fusion_weights is not None:
+        #     self.attention = self.attention.load_state_dict(state_dict=fusion_weights)
+        
+        # self.attention.eval()
+
+        raise NotImplemented("this fusion strategy is currently not available.")
+
+    def forward(self, embeddings: typing.List[torch.Tensor]):
+        output_scores = []
+        input_emb = torch.cat(embeddings, dim=-1)
+        att_output = self.attention(input_emb)
+        att_scores = self.softmax(att_output)
+
+        # attention logic
+        output_emb = None
+        return output_emb
