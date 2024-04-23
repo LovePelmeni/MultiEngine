@@ -27,6 +27,9 @@ import torch
 from torch import optim
 from torch.optim import lr_scheduler
 from torch import device
+import pathlib
+from src.metrics import metrics
+from src.training.regularization import grad_blend
 
 @dataclasses.dataclass
 class TrainerConfig(object):
@@ -38,6 +41,22 @@ class TrainerConfig(object):
     train_devices: typing.List[torch.DeviceObjType]
     optimizer_config: typing.Dict[str, typing.Any]
     lr_scheduler_config: typing.Dict[str, typing.Any]
+
+@dataclasses.dataclass
+class SnapshotConfig(object):
+    """
+    Configuration class for the training checkpointing
+    of the network.
+
+    Parameters:
+    -----------
+        save_every: number of epochs before making network checkpoint.
+        snapshot_log_dir - folder directory to store snapshot files.
+        snapshot_ext - extention to use for the snapshot file.
+    """
+    snapshot_path_name: str
+    snapshot_ext: typing.Literal['pt', 'pth'] = 'pt'
+
 
 class ContrastiveTrainer(base.BaseTrainer):
     """
@@ -65,6 +84,7 @@ class ContrastiveTrainer(base.BaseTrainer):
     """
     def __init__(self,
         train_configs: typing.List[TrainerConfig],
+        snapshot_configs: typing.List[SnapshotConfig],
         contrastive_sampler: sampler.BaseSampler,
         batch_size: int,
         pair_loss_name: str,
@@ -89,7 +109,10 @@ class ContrastiveTrainer(base.BaseTrainer):
         self.dist_backend = dist_backend
         self.group_name = group_name
 
-        self.configure_callbacks(base_log_dir=log_dir)
+        self.configure_callbacks(
+            base_log_dir=log_dir, 
+            snapshot_configs=snapshot_configs
+        )
 
         self.on_init_start()
         self.configure_setup(train_configs=train_configs)
@@ -101,7 +124,10 @@ class ContrastiveTrainer(base.BaseTrainer):
         self.pair_loss_function = self.load_loss(pair_loss_name)
         self.modal_loss_function = self.load_loss(modal_loss_name)
         self.eval_metric = self.load_metric(eval_metric_name)
-        self.stop = False # status code to urgently stop training
+        self.save_every: int = save_every
+
+        # OGR settings for joint multimodal training.
+        self.blend_regularizer = grad_blend.GradientBlending()
 
     def configure_setup(self, train_configs: typing.List[TrainerConfig]):
         """
@@ -134,161 +160,44 @@ class ContrastiveTrainer(base.BaseTrainer):
             self.networks.append(network)
             self.optimizers.append(optimizer)
             self.schedulers.append(lr_scheduler)
-        
-    def configure_network(self, 
-        network: nn.Module, 
-        device_ids: typing.List[torch.device],
-        output_device: str = 'cpu'
-    ):
-        if (self.distributed == True):
-            conf_network = DDP(
-                network, 
-                device_ids=device_ids, 
-                output_device=output_device
-            )
-        else:
-            devices = ','.join(device_ids)
-            conf_network = network.to(device=devices)
-        return conf_network
-    
-    def configure_optimizer(self, network: nn.Module, optimizer_config: typing.Dict) -> nn.Module:
 
-        optimizer_name = optimizer_config.get("name")
-        learning_rate = optimizer_config.get("learning_rate")
-        weight_decay = optimizer_config.get("weight_decay", None)
-        use_nesterov = optimizer_config.get("nesterov", False)
+    def configure_snapshot_callbacks(self, 
+        base_log_dir: str, 
+        snapshot_configs: typing.List[SnapshotConfig]):
+        """
+        Configures snapshoting for each
+        modality encoder.
 
-        if optimizer_name.lower() == 'adam':
-            optimizer = optim.Adam(
-                params=network.parameters(),
-                lr=learning_rate,
-                weight_decay=weight_decay
-            )
+        Parameters:
+        -----------
+            base_log_dir - base directory to store snapshots
+            snapshot_configs - list of snapshot configurations.
+        """
+        if len(snapshot_configs) == 0:
+            return 
 
-        elif optimizer_name.lower() == 'adamax':
-            optimizer = optim.Adamax(
-                params=network.parameters(),
-                lr=learning_rate,
-                weight_decay=weight_decay
+        for config in snapshot_configs:
+
+            snap_path_name = config.snapshot_path_name
+            snap_ext = config.snapshot_ext
+            snapshot_log_dir = os.path.join(base_log_dir, snap_ext)
+
+            self.callbacks.append(
+                checkpoints.SnapshotCallback(
+                    snapshot_ext=snap_ext, 
+                    save_every=self.save_every, 
+                    log_dir=snapshot_log_dir
+                )
             )
         
-        elif optimizer_name.lower() == 'rmsprop':
-            optimizer = optim.RMSprop(
-                params=network.parameters(),
-                lr=learning_rate,
-                weight_decay=weight_decay
-            )
-        
-        elif optimizer_name.lower() == 'sgd':
-            optimizer = optim.SGD(
-                params=network.parameters(),
-                weight_decay=weight_decay,
-                learning_rate=learning_rate,
-                nesterov=use_nesterov
-            )
-        else:
-            raise NotImplemented()
-
-        if (self.distributed == True):
-            optimizer = zero.ZeroRedundancyOptimizer(
-                params=network.parameters(),
-                optimizer_class=optimizer_name,
-                lr=learning_rate,
-                weight_decay=weight_decay,
-            )
-        return optimizer
-
-    def configure_loader(self, 
-        dataset: data.Dataset, 
-        num_workers: int,
-        batch_size: int, 
-        distributed: bool = False,
-        num_replicas: int = 1) -> data.DataLoader:
-        """
-        Configures data loader for
-        training / validation phase.
-        """
-        if distributed:
-            return data.DataLoader(
-                dataset=dataset,
-                batch_size=batch_size,
-                pin_memory=True,
-                shuffle=False,
-                num_workers=num_workers,
-                sampler=data.DistributedSampler(
-                    dataset=dataset, 
-                    num_replicas=num_replicas
-                ),
-            )
-        else:
-            return data.DataLoader(
-                dataset=dataset,
-                batch_size=batch_size,
-                shuffle=False,
-                num_workers=num_workers
-            )
-
-    def configure_lr_scheduler(self, 
-        optimizer: nn.Module, 
-        lr_scheduler_config: typing.Dict) -> nn.Module:
-        """
-        Supports:
-            'poly', 'step', 'multistep', 'exp';
-        """
-        name = lr_scheduler_config.get("name")
-        verbose = lr_scheduler_config.get("verbose", False)
-        gamma = lr_scheduler_config.get("gamma")
-        total_iters = lr_scheduler_config.get("total_iters")
-
-        if name == 'poly':
-            return lr_scheduler.PolynomialLR(
-                optimizer=optimizer,
-                total_iters=total_iters,
-                power=gamma,
-                verbose=verbose
-            )
-        if name == 'step':
-            step_size = lr_scheduler_config.get("step_size")
-            return lr_scheduler.StepLR(
-                optimizer=optimizer,
-                step_size=step_size,
-                gamma=gamma,
-                verbose=verbose
-            )
-
-        if name == 'multistep':
-            steps = lr_scheduler_config.get("steps")
-            return lr_scheduler.MultiStepLR(
-                optimizer=optimizer,
-                milestones=steps,
-                gamma=gamma,
-                verbose=verbose
-            )
-
-        if name == 'exp':
-            return lr_scheduler.ExponentialLR(
-                optimizer=optimizer,
-                gamma=gamma,
-                verbose=verbose
-            )
-
-    def configure_device(self, device_name: str):
-        return device(device_name)
-
-    def configure_callbacks(self, base_log_dir: typing.Union[str, pathlib.Path]):
+    def configure_callbacks(self, 
+        snapshot_configs: typing.List[SnapshotConfig], 
+        base_log_dir: typing.Union[str, pathlib.Path]):
 
         report_log_dir = os.path.join(base_log_dir, "reports")
         cpu_log_dir = os.path.join(base_log_dir, "cpu")
         gpu_log_dir = os.path.join(base_log_dir, "gpu")
         network_monitor_log_dir = os.path.join(base_log_dir, "network_health")
-
-        snapshot_log_dir = os.path.join(base_log_dir, "snapshots")
-        snapshot_ext = self.snapshot_config.get("snapshot_ext")
-        save_every = self.snapshot_config.get("save_every")
-
-        min_diff = self.early_stopping_config.get("min_diff")
-        patience = self.early_stopping_config.get("patience")
-        validation_dataset = self.early_stopping_config.get("validation_dataset")
         
         self.callbacks = [
             logistics.LogisticsCallback(log_dir=report_log_dir),
@@ -299,20 +208,12 @@ class ContrastiveTrainer(base.BaseTrainer):
                 log_dir=network_monitor_log_dir,
                 weight_param_tag='weights',
                 bias_param_tag='biases'
-            ),
-            
-            checkpoints.SnapshotCallback(
-                snapshot_ext=snapshot_ext, 
-                save_every=save_every, 
-                log_dir=snapshot_log_dir
-            ),
-            
-            early_stopping.EarlyStoppingCallback(
-                min_diff=min_diff,
-                patience=patience,
-                validation_dataset=validation_dataset
             )
         ]
+         
+        # configuring snapshot callbacks
+        self.configure_snapshot_callbacks(base_log_dir, snapshot_configs)
+
         if self.distributed:
             dist_callback = call_dist.DistributedTrainCallback(
                 rank=self.dist_rank,
@@ -381,7 +282,13 @@ class ContrastiveTrainer(base.BaseTrainer):
         self.on_init_start()
 
         global_step = 0
-        overall_loss = float('inf')
+        curr_metric = 0
+
+        image_overall_loss = float('inf')
+        desc_overall_loss = float('inf')
+        title_overall_loss = float('inf')
+        img_title_modal_loss = float('inf')
+        img_desc_modal_loss = float('inf')
 
         # turning multimodal encoders to
         # training mode.
@@ -391,12 +298,23 @@ class ContrastiveTrainer(base.BaseTrainer):
         loader = self.configure_loader(train_dataset)
         self.on_init_end()
 
+        weights = torch.ones((5,))
+
         for epoch in range(self.max_epochs):
 
-            for images, titles, descriptions, labels in tqdm(
-                    loader, 
-                    desc='epoch: %s; curr_loss: %s;' % (
-            epoch, overall_loss)):
+            image_epoch_losses = []
+            desc_epoch_losses = []
+            title_epoch_losses = []
+            img_title_modal_losses = []
+            img_desc_modal_losses = [] 
+
+            for images, titles, descriptions, labels in tqdm(loader, desc="""
+                    epoch: %s; image_loss: %s; 
+                    desc_loss: %s; title_loss: %s; 
+                    curr_metric: %s;""" % (
+                        epoch, image_overall_loss, 
+                        desc_overall_loss, title_overall_loss, 
+                        curr_metric)):
 
                 # finding hard pairs of (pos_sample, sample, neg_sample) for
                 # contrastive learning training, using current batch
@@ -465,17 +383,19 @@ class ContrastiveTrainer(base.BaseTrainer):
                     desc_loss = self.pair_loss_function(pos_d_emb, pair_d_emb, neg_d_emb)
                     title_loss = self.pair_loss_function(pos_t_emb, pair_t_emb, neg_t_emb)
                     
-                    modal_sim_loss = (
-                        self.modal_loss_function(pair_v_emb, pair_t_emb) + 
-                        self.modal_loss_function(pair_v_emb, pair_d_emb)
-                    )
+                    img_title_modal_sim_loss = self.modal_loss_function(pair_v_emb, pair_t_emb)
+                    img_desc_modal_sim_loss = self.modal_loss_function(pair_v_emb, pair_d_emb)
                     
                     # overall loss function: summary of image similarity pairs, text similarity pairs
                     # and similarity between modalities
 
-                    img_encoder_loss = img_loss + modal_sim_loss
-                    title_encoder_loss = title_loss + modal_sim_loss
-                    desc_encoder_loss = desc_loss + modal_sim_loss
+                    img_encoder_loss = weights[0] * img_loss + weights[3] * img_title_modal_sim_loss
+                    title_encoder_loss = weights[1] * title_loss + weights[3] * img_title_modal_sim_loss
+                    desc_encoder_loss = weights[2] * desc_loss + weights[4] * img_desc_modal_sim_loss
+                    
+                    image_epoch_losses.append(img_encoder_loss.item())
+                    title_epoch_losses.append(title_encoder_loss.item())
+                    desc_epoch_losses.append(desc_encoder_loss.item())
                     
                     # in case we are using single gpu, we traverse
                     # over all computed loss (for each modality) and after each update
@@ -504,6 +424,39 @@ class ContrastiveTrainer(base.BaseTrainer):
 
                     self.on_train_batch_end()
 
+            image_overall_loss = numpy.mean(image_epoch_losses)
+            title_overall_loss = numpy.mean(title_epoch_losses)
+            desc_overall_loss = numpy.mean(desc_overall_losses)
+            img_title_modal_loss = numpy.mean(img_title_modal_losses)
+            img_desc_modal_loss = numpy.mean(img_desc_modal_losses)
+
+
+            # updating Gradient Blending weights
+
+            if (epoch + 1) % self.save_every == 0:
+                train_losses = torch.FloatTensor(
+                    [
+                        image_overall_loss, 
+                        title_overall_loss, 
+                        desc_overall_loss
+                    ], 
+                    requires_grad=False
+                )
+
+                validation_losses = torch.FloatTensor(
+                    [
+                        image_validation_loss,
+                        title_validation_loss,
+                        desc_validation_loss
+                    ], 
+                    requires_grad=False
+                )
+
+                weights = self.blend_regularizer.compute_weights(
+                    curr_train_losses=train_losses, 
+                    curr_valid_losses=validation_losses
+                )
+
             # we pass argument 'trainer' to this event
             # in case early stopping callback want to say us, that training is done.
             # It will update flag 'stop' to True
@@ -513,8 +466,9 @@ class ContrastiveTrainer(base.BaseTrainer):
             self.on_validation_start(global_step=global_step)
             self.on_validation_end(global_step=global_step)
             self.on_train_epoch_end(global_step=global_step)
-
+            
             if self.stop: break
+
         self.tearDown()
 
     def find_similarity(self, embeddings_group):
@@ -552,5 +506,3 @@ class ContrastiveTrainer(base.BaseTrainer):
             metric = self.find_similarity(cat_embeddings)
             output_metrics[label] = metric
         return output_metrics
-
-
