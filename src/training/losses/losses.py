@@ -77,3 +77,32 @@ class MultilabelFocalLoss(FocalLoss):
             normalized=normalized,
             ignore_index=ignore_index
         )
+
+class NTXentLoss(nn.Module):
+    """
+    Implementation of the NT Xent loss
+    function for contrastive learning
+    applications.
+    """
+    def __init__(self, 
+        similarity_metric: typing.Callable, 
+        temperature: float
+    ):
+        super(NTXentLoss, self).__init__()
+        self.sim = similarity_metric
+        self.temperature: float = temperature
+
+    def forward(self, pairs: typing.List):
+        sample_losses = []
+        for curr_idx, (pos_sample, sample, neg_sample) in enumerate(pairs):
+            rest_negatives = [
+                torch.exp(self.sim(neg, sample) / self.temperature)
+                for idx, (_, _, neg) in enumerate(pairs) if idx != curr_idx
+            ]
+            sample_loss = -torch.log10(
+                torch.exp(self.sim(pos_sample, sample) / self.temperature
+                ) / torch.sum(rest_negatives)
+            )
+            sample_losses.append(sample_loss)
+        return torch.mean(sample_losses)
+
