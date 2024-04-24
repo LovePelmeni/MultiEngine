@@ -4,10 +4,18 @@ import numpy
 import torch
 import logging
 import matplotlib.pyplot as plt
-from sklearn.decomposition import (
-    PCA
-)
+import matplotlib.patheffects as PathEffects
+import seaborn as sns
+from sklearn.decomposition import PCA
 from collections import Counter
+
+sns.set_style('darkgrid')
+sns.set_palette('muted')
+sns.set_context(
+    'notebook', 
+    font_scale=1.5,
+    rc={"lines.linewidth": 2.5}
+)
 
 logger = logging.getLogger(__name__)
 file_handler = logging.FileHandler(filename='fusion_explainer_logs.log')
@@ -26,9 +34,14 @@ class FusionExplainer(object):
         unique_labels - set of unique labels, that identify categories of 
         embeddings
     """
-    def __init__(self, distance_metric: typing.Callable, unique_labels: int, **kwargs):
+    def __init__(self, 
+        distance_metric: typing.Callable, 
+        unique_labels: int, 
+        figsize: tuple = (15, 15),
+        **kwargs):
         self.emb_kmeans = EmbeddingKMeans(unique_labels, distance_metric)
         self.emb_dim_reducer = PCA(n_components=2)
+        self.figsize: tuple = figsize
 
     def _compute_cluster_accuracy(self, 
         cluster_labels: typing.List[typing.Union[str, int]],
@@ -61,11 +74,14 @@ class FusionExplainer(object):
         """
         cluster_samples = list(zip(labels, embeddings))
         clusters = self.emb_kmeans.fit(cluster_samples)
+
         clusters = [
             [cluster_samples[idx] for idx in cluster] 
             for cluster in self.emb_kmeans.clusters
         ]
+
         cluster_accs = {}
+
         for idx, cluster in enumerate(clusters):
             mode_label = Counter([sample[0] for sample in cluster]).most_common(1)[0][0]
             cluster_accs[idx] = {
@@ -94,19 +110,22 @@ class FusionExplainer(object):
             predictions - predicted fused embedding vectors, merged from multiple modalities
             target_labels - corresponding target labels for each vector.
         """
-        agg_vecs = numpy.asarray(self.aggregate_embeddings(
-            predicted_embs=embeddings,
-        ))
+        agg_vecs = numpy.asarray(self.aggregate_embeddings(predicted_embs=embeddings))
         labels = numpy.asarray(labels)
-        plt.figure(figsize=(15, 15))
-        print([cluster_infos[label]['label'] for label in list(cluster_infos.keys())])
+
+        plt.figure(figsize=self.figsize)
+    
         for config_id in list(cluster_infos.keys()):
+
             config = cluster_infos[config_id]
             label_indices = numpy.where(labels == config.get("label"))[0]
+
             color_map = config.get("color")
             vecs = agg_vecs[label_indices]
+
             avg_x = int(sum([vec[0] for vec in vecs]) / len(vecs))
             avg_y = int(sum([vec[1] for vec in vecs]) / len(vecs))
+
             for vec_2d in vecs:
                 plt.scatter(x=vec_2d[0], y=vec_2d[1], c=color_map)
         
@@ -114,8 +133,26 @@ class FusionExplainer(object):
             "acc: %s" % cluster_infos[config_id]['accuracy']
             for config_id in list(cluster_infos.keys())
         ])
+
+        texts = []
+
+        for label in labels:
+
+            xtext, ytext = numpy.median(embeddings[numpy.where(labels == label)[0]])
+            text = ax.text(xtext, ytext, str(label), fontsize=24)
+
+            text.set_path_effects([
+                PathEffects.Stroke(linewidth=5, foreground="w"),
+                PathEffects.Normal()])
+
+            texts.append(text)
+            
+        if subtitle != None:
+            plt.suptitle(subtitle)
+
         for idx in range(len(cluster_infos)):
             leg.legendHandles[idx].set_color(cluster_infos[idx]['color'])
+
         plt.show()
 
     def aggregate_embeddings(self, predicted_embs: torch.Tensor):
@@ -139,5 +176,12 @@ class FusionExplainer(object):
         Parameters:
         -----------
         """
-        clusters_info = self.analyze_clustered_fused_embeddings(modal_embeddings, target_labels)
-        self.visualize_predictions(clusters_info, embeddings, target_labels)
+        clusters_info = self.analyze_clustered_fused_embeddings(
+            modal_embeddings, 
+            target_labels
+        )
+        self.visualize_predictions(
+            clusters_info, 
+            embeddings, 
+            target_labels
+        )

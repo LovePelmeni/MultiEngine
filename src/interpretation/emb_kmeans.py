@@ -111,3 +111,4 @@ class EmbeddingKMeans(object):
             euclid_distance = euclidian_distance(new_centroids[idx][1], old_centroids[idx][1])
             distance += euclid_distance
         return (distance < self.convergence_eps)
+

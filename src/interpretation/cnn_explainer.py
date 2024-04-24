@@ -56,3 +56,4 @@ class CNNExplainer(object):
             ax[curr_img, 1].imshow(mixed_map)
             curr_img += 1
 
+
