@@ -1,10 +1,9 @@
 from torch.utils.data import Dataset
-from src.training.datasets import base
 import typing
 import cv2
 import typing
 
-class ContrastiveDataset(base.BaseDataset, Dataset):
+class ContrastiveDataset(Dataset):
     """
     Implementation of the dataset,
     for contrastive learning.
@@ -136,7 +135,7 @@ class ContrastiveDataset(base.BaseDataset, Dataset):
     def dataset_type(self, new_dataset_type: str):
         self._dataset_type = new_dataset_type
 
-class FusionDataset(data.Dataset):
+class FusionDataset(Dataset):
     """
     Implementation of the dataset 
     for training fusion layer of multimodal
@@ -188,7 +187,7 @@ class FusionDataset(data.Dataset):
         return len(self.image_embedding)
 
 
-class QuantizationImageDataset(base.BaseDataset, Dataset):
+class QuantizationImageDataset(Dataset):
     """
     Dataset for storing image data
     for quantizing image modality encoder.
@@ -266,7 +265,7 @@ class QuantizationDescriptionDataset(base.BaseDataset, Dataset):
         except(FileNotFoundError) as err:
             raise RuntimeError("invalid document paths passed. Document: %s cannot be accessed")
 
-class QuantizationTitleDataset(base.BaseDataset, Dataset):
+class QuantizationTitleDataset(Dataset):
     """
     Dataset stores title .txt documents, that 
     are used for quantizing title modality encoder.
@@ -311,3 +310,4 @@ class QuantizationTitleDataset(base.BaseDataset, Dataset):
 
         except(FileNotFoundError) as err:
             raise RuntimeError("invalid document paths passed. Document: %s cannot be accessed")
+
