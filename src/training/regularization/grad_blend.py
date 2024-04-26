@@ -1,7 +1,5 @@
 from src.training.trainers import base as base_trainer
-import logging
-
-logger = logging.getLogger(__name__)
+import torch
 
 class GradientBlending(object):
     """
@@ -28,8 +26,4 @@ class GradientBlending(object):
             ONn = curr_valid_losses - curr_train_losses
             dO = ONn - On
             dG = curr_valid_losses - self.prev_validation_losses
-            return (ONn - on) / dG
-
-
-
-
+            return dO / dG
